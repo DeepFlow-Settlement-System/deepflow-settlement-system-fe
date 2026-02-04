@@ -29,12 +29,20 @@ export default function RoomLayout() {
         <NavLink to={base} end style={linkStyle}>
           홈
         </NavLink>
+
+        {/* ✅ 등록은 add-expense로 고정 */}
         <NavLink to={`${base}/add-expense`} style={linkStyle}>
           등록
         </NavLink>
+
         <NavLink to={`${base}/settlement`} style={linkStyle}>
           정산
         </NavLink>
+
+        <NavLink to={`${base}/invite`} style={linkStyle}>
+          초대
+        </NavLink>
+
         <NavLink to={`${base}/settings`} style={linkStyle}>
           설정
         </NavLink>
