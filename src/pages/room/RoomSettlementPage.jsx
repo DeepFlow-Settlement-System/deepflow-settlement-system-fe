@@ -1,24 +1,27 @@
+// src/pages/room/RoomSettlementPage.jsx
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
-const EXPENSES_KEY = (roomId) => `expenses_v1_${roomId}`;
-const STATUS_KEY = (roomId) => `settlement_status_v1_${roomId}`;
+const EXPENSES_KEY_V2 = (roomId) => `expenses_v2_${roomId}`;
+const EXPENSES_KEY_V1 = (roomId) => `expenses_v1_${roomId}`; // 과거 데이터 호환
 const ME_KEY = "user_name_v1";
 
-const STATUS = {
-  READY: "READY", // 요청 전
-  REQUESTED: "REQUESTED", // 요청함
-  DONE: "DONE", // 완료
+const SPLIT = {
+  EQUAL: "EQUAL",
+  ITEM: "ITEM",
+};
+
+const ITEM_SPLIT = {
+  PER_PERSON: "PER_PERSON", // 1인당 가격
+  TOTAL_SPLIT: "TOTAL_SPLIT", // 총액 n빵(총액/선택 인원)
 };
 
 function loadMe() {
   return localStorage.getItem(ME_KEY) || "현서";
 }
 
-function loadExpenses(roomId) {
+function safeParseArray(raw) {
   try {
-    const raw = localStorage.getItem(EXPENSES_KEY(roomId));
-    if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -26,93 +29,119 @@ function loadExpenses(roomId) {
   }
 }
 
-function loadStatus(roomId) {
-  try {
-    const raw = localStorage.getItem(STATUS_KEY(roomId));
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
+// v2 우선 + v1도 합쳐서 읽음(이전 데이터가 남아있어도 "되던 것" 유지)
+function loadExpenses(roomId) {
+  const raw2 = localStorage.getItem(EXPENSES_KEY_V2(roomId));
+  const raw1 = localStorage.getItem(EXPENSES_KEY_V1(roomId));
+
+  const a2 = raw2 ? safeParseArray(raw2) : [];
+  const a1 = raw1 ? safeParseArray(raw1) : [];
+
+  return [...a2, ...a1];
+}
+
+function addTransfer(map, from, to, amount) {
+  if (!from || !to) return;
+  if (from === to) return;
+
+  const v = Math.round(Number(amount) || 0);
+  if (v <= 0) return;
+
+  const key = `${from}->${to}`;
+  map.set(key, (map.get(key) || 0) + v);
+}
+
+/**
+ * 총액을 users에게 나누되, "나머지 1원"을 앞 사람부터 +1씩 배분
+ * 예: total=10001, users=3명 => [3334,3334,3333] (앞에서부터 1원씩)
+ * 반환: Map(user -> shareWon)
+ */
+function splitTotalWithRemainder(total, users) {
+  const arr = Array.isArray(users) ? users : [];
+  const n = arr.length;
+  const out = new Map();
+  if (n === 0) return out;
+
+  const T = Math.round(Number(total) || 0);
+  if (T <= 0) return out;
+
+  const base = Math.floor(T / n);
+  const rem = T - base * n;
+
+  arr.forEach((u) => out.set(u, base));
+  for (let i = 0; i < rem; i++) {
+    const u = arr[i % n];
+    out.set(u, (out.get(u) || 0) + 1);
   }
+  return out;
 }
 
-function saveStatus(roomId, obj) {
-  localStorage.setItem(STATUS_KEY(roomId), JSON.stringify(obj));
-}
-
-// 지출 기반 균등분할 정산 계산:
-// - 각 지출 amount를 participants 수로 나눔
-// - payer는 amount를 paid에 더하고
-// - 각 participant는 share를 owe에 더함
-function computeNet(expenses) {
-  const paid = new Map();
-  const owe = new Map();
-
-  const add = (map, name, v) => map.set(name, (map.get(name) || 0) + v);
+function computeTransfers(expenses) {
+  const transfers = new Map();
 
   for (const e of expenses) {
-    const amount = Number(e.amount) || 0;
-    const payer = e.payerName || "미정";
+    // ✅ 결제자 필드 호환
+    const payer = e.payerName || e.payer || "미정";
+
+    // ✅ splitType 없으면 items 있으면 ITEM으로 간주
+    const splitType =
+      e.splitType ||
+      (Array.isArray(e.items) && e.items.length > 0 ? SPLIT.ITEM : SPLIT.EQUAL);
+
+    // 1) ITEM(혼합 품목)
+    if (splitType === SPLIT.ITEM) {
+      const items = Array.isArray(e.items) ? e.items : [];
+
+      for (const item of items) {
+        const users = Array.isArray(item.users) ? item.users : [];
+        if (users.length === 0) continue;
+
+        // split이 없으면 레거시로 PER_PERSON 처리
+        const itemSplit = item.split || ITEM_SPLIT.PER_PERSON;
+
+        // (a) 총액 n빵: item.amount를 users에게 나눔
+        if (itemSplit === ITEM_SPLIT.TOTAL_SPLIT) {
+          const shares = splitTotalWithRemainder(item.amount, users);
+
+          for (const u of users) {
+            if (u === payer) continue; // payer는 본인 부담분 송금 X
+            addTransfer(transfers, u, payer, shares.get(u) || 0);
+          }
+          continue;
+        }
+
+        // (b) 1인당 가격: 각 user가 payer에게 pricePerPerson 송금
+        const price = Number(item.pricePerPerson) || 0;
+        if (price <= 0) continue;
+
+        for (const u of users) {
+          if (u === payer) continue;
+          addTransfer(transfers, u, payer, price);
+        }
+      }
+
+      continue;
+    }
+
+    // 2) EQUAL(지출 전체 n빵)
+    const total = Math.round(Number(e.amount) || 0);
     const participants =
       Array.isArray(e.participants) && e.participants.length > 0
         ? e.participants
         : [payer];
 
-    const share = amount / participants.length;
-
-    add(paid, payer, amount);
-    for (const p of participants) add(owe, p, share);
-  }
-
-  const people = new Set([...paid.keys(), ...owe.keys()]);
-  const net = new Map(); // +면 받을 돈, -면 보낼 돈
-  for (const name of people) {
-    const v = (paid.get(name) || 0) - (owe.get(name) || 0);
-    // 부동소수 오차 줄이기
-    net.set(name, Math.round(v));
-  }
-  return net;
-}
-
-// 전체 정산을 "누가 누구에게"로 만들되,
-// 여기서는 "나(현재 사용자)가 받을 돈"만 뽑아서 요청 대상 리스트를 만든다.
-function computeRequestsForMe(net, me) {
-  const receivers = [];
-  const payers = [];
-
-  for (const [name, v] of net.entries()) {
-    if (v > 0) receivers.push({ name, amount: v });
-    else if (v < 0) payers.push({ name, amount: -v });
-  }
-
-  receivers.sort((a, b) => b.amount - a.amount);
-  payers.sort((a, b) => b.amount - a.amount);
-
-  // greedy matching
-  const result = new Map(); // payerName -> amountToMe
-
-  let rIdx = 0;
-  for (const p of payers) {
-    let remaining = p.amount;
-    while (remaining > 0 && rIdx < receivers.length) {
-      const r = receivers[rIdx];
-      const send = Math.min(remaining, r.amount);
-
-      // 이번 매칭이 "me에게 보내는 돈"이면 기록
-      if (r.name === me) {
-        result.set(p.name, (result.get(p.name) || 0) + send);
-      }
-
-      remaining -= send;
-      r.amount -= send;
-      if (r.amount === 0) rIdx += 1;
+    const shares = splitTotalWithRemainder(total, participants);
+    for (const u of participants) {
+      if (u === payer) continue;
+      addTransfer(transfers, u, payer, shares.get(u) || 0);
     }
   }
 
-  // 정렬된 배열로 반환
-  return Array.from(result.entries())
-    .map(([name, amount]) => ({ name, amount }))
+  return Array.from(transfers.entries())
+    .map(([key, amount]) => {
+      const [from, to] = key.split("->");
+      return { from, to, amount: Math.round(amount) };
+    })
     .sort((a, b) => b.amount - a.amount);
 }
 
@@ -121,70 +150,25 @@ export default function RoomSettlementPage() {
   const me = loadMe();
 
   const expenses = useMemo(() => loadExpenses(roomId), [roomId]);
-  const net = useMemo(() => computeNet(expenses), [expenses]);
-  const requestTargetsBase = useMemo(
-    () => computeRequestsForMe(net, me),
-    [net, me],
+  const transfers = useMemo(() => computeTransfers(expenses), [expenses]);
+
+  const myTransfers = useMemo(
+    () => transfers.filter((t) => t.from === me || t.to === me),
+    [transfers, me],
   );
 
-  const [statusMap, setStatusMap] = useState(() => loadStatus(roomId));
-  const [notice, setNotice] = useState("");
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? transfers : myTransfers;
 
-  const showNotice = (msg) => {
-    setNotice(msg);
-    window.clearTimeout(showNotice._t);
-    showNotice._t = window.setTimeout(() => setNotice(""), 2500);
-  };
-
-  // status 반영된 targets
-  const requestTargets = useMemo(() => {
-    return requestTargetsBase.map((t) => ({
-      ...t,
-      status: statusMap[t.name] || STATUS.READY,
-    }));
-  }, [requestTargetsBase, statusMap]);
-
-  const readyTargets = useMemo(
-    () => requestTargets.filter((t) => t.status === STATUS.READY),
-    [requestTargets],
-  );
-
-  const persistStatus = (next) => {
-    setStatusMap(next);
-    saveStatus(roomId, next);
-  };
-
-  const requestOne = (name) => {
-    const next = { ...statusMap, [name]: STATUS.REQUESTED };
-    persistStatus(next);
-    showNotice("정산 요청을 보냈습니다.");
-  };
-
-  const resendOne = (name) => {
-    showNotice(`${name}님에게 정산 요청을 재전송했습니다.`);
-  };
-
-  const doneOne = (name) => {
-    const next = { ...statusMap, [name]: STATUS.DONE };
-    persistStatus(next);
-    showNotice("완료 처리되었습니다.");
-  };
-
-  const openRequestAllModal = () => setIsModalOpen(true);
-  const closeRequestAllModal = () => setIsModalOpen(false);
-
-  const sendRequestAll = () => {
-    // READY인 사람들만 REQUESTED로
-    const next = { ...statusMap };
-    for (const t of readyTargets) next[t.name] = STATUS.REQUESTED;
-    persistStatus(next);
-
-    showNotice("전체에게 정산 요청을 보냈습니다.");
-    closeRequestAllModal();
-  };
-
-  const myNet = net.get(me) || 0;
+  const summary = useMemo(() => {
+    let send = 0;
+    let recv = 0;
+    for (const t of myTransfers) {
+      if (t.from === me) send += t.amount;
+      if (t.to === me) recv += t.amount;
+    }
+    return { send, recv };
+  }, [myTransfers, me]);
 
   return (
     <div style={{ padding: 16 }}>
@@ -194,38 +178,6 @@ export default function RoomSettlementPage() {
         기준 사용자: <b>{me}</b>
       </div>
 
-      {/* notice */}
-      {notice && (
-        <div
-          style={{
-            margin: "8px 0 12px",
-            padding: "8px 12px",
-            borderRadius: 8,
-            background: "#e3f2fd",
-            color: "#1976d2",
-            fontSize: 14,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <span>{notice}</span>
-          <button
-            onClick={() => setNotice("")}
-            style={{
-              background: "transparent",
-              border: "none",
-              fontSize: 16,
-              cursor: "pointer",
-              color: "#1976d2",
-            }}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {/* 요약 */}
       <div
         style={{
           border: "1px solid #eee",
@@ -235,50 +187,39 @@ export default function RoomSettlementPage() {
           marginBottom: 12,
         }}
       >
-        <div style={{ fontSize: 12, color: "#777" }}>
-          내 정산 결과(균등분할 기준)
-        </div>
-        <div style={{ fontSize: 20, fontWeight: 900 }}>
-          {myNet >= 0 ? "받을 금액 " : "보낼 금액 "}
-          {Math.abs(myNet).toLocaleString()}원
-        </div>
-
+        <div style={{ fontSize: 12, color: "#777" }}>내 기준 요약</div>
         <div
-          style={{
-            marginTop: 10,
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
+          style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 6 }}
         >
-          <button
-            onClick={openRequestAllModal}
-            disabled={readyTargets.length === 0}
-          >
-            한 번에(전부) 요청 보내기
-          </button>
-          {readyTargets.length === 0 && (
-            <span style={{ color: "#777" }}>요청할 사람이 없습니다</span>
-          )}
+          <div>
+            보낼 금액: <b>{summary.send.toLocaleString()}원</b>
+          </div>
+          <div>
+            받을 금액: <b>{summary.recv.toLocaleString()}원</b>
+          </div>
         </div>
 
-        <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>
-          * 정산은 등록된 지출(결제자/참여자) 기반으로 계산됩니다.
+        <div style={{ marginTop: 10 }}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={showAll}
+              onChange={(e) => setShowAll(e.target.checked)}
+            />
+            전체 송금표도 보기
+          </label>
         </div>
       </div>
 
-      {/* 요청 리스트 */}
-      {requestTargets.length === 0 ? (
+      {shown.length === 0 ? (
         <div style={{ color: "#777" }}>
-          현재 <b>{me}</b> 기준으로 요청할 대상이 없습니다. (받을 금액이 없거나,
-          지출 데이터/참여자 정보가 부족할 수 있어요)
+          정산할 내역이 없습니다. (지출/품목/참여자 데이터를 확인해주세요)
         </div>
       ) : (
         <div style={{ display: "grid", gap: 10 }}>
-          {requestTargets.map((t) => (
+          {shown.map((t, idx) => (
             <div
-              key={t.name}
+              key={idx}
               style={{
                 border: "1px solid #eee",
                 borderRadius: 12,
@@ -286,123 +227,25 @@ export default function RoomSettlementPage() {
                 background: "white",
                 display: "flex",
                 justifyContent: "space-between",
-                gap: 12,
                 alignItems: "center",
+                gap: 12,
               }}
             >
               <div>
-                <div style={{ fontWeight: 900 }}>{t.name}</div>
+                <b>{t.from}</b> → <b>{t.to}</b>
                 <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
-                  요청 금액: {t.amount.toLocaleString()}원
+                  {t.from === me
+                    ? "내가 보내야 함"
+                    : t.to === me
+                      ? "내가 받아야 함"
+                      : "전체 송금표"}
                 </div>
               </div>
-
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                {t.status === STATUS.READY && (
-                  <button onClick={() => requestOne(t.name)}>요청</button>
-                )}
-
-                {t.status === STATUS.REQUESTED && (
-                  <>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color: "#1976d2",
-                        fontWeight: 800,
-                      }}
-                    >
-                      요청됨
-                    </span>
-                    <button onClick={() => resendOne(t.name)}>재 전송</button>
-                    <button onClick={() => doneOne(t.name)}>완료</button>
-                  </>
-                )}
-
-                {t.status === STATUS.DONE && (
-                  <span
-                    style={{ fontSize: 12, color: "#16a34a", fontWeight: 900 }}
-                  >
-                    완료됨
-                  </span>
-                )}
+              <div style={{ fontWeight: 900 }}>
+                {t.amount.toLocaleString()}원
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* 전체 요청 모달 */}
-      {isModalOpen && (
-        <div
-          onClick={closeRequestAllModal}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.35)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 420,
-              background: "white",
-              borderRadius: 12,
-              padding: 16,
-              border: "1px solid #eee",
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>정산 요청 보내기</h3>
-
-            <div style={{ marginTop: 12, fontWeight: 900 }}>요청 받는 사람</div>
-
-            <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-              {readyTargets.map((t) => (
-                <div
-                  key={t.name}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: 10,
-                    border: "1px solid #f0f0f0",
-                    borderRadius: 8,
-                  }}
-                >
-                  <span>{t.name}</span>
-                  <span>{t.amount.toLocaleString()}원</span>
-                </div>
-              ))}
-
-              {readyTargets.length === 0 && (
-                <div style={{ color: "#777" }}>요청할 사람이 없습니다.</div>
-              )}
-            </div>
-
-            <div
-              style={{
-                marginTop: 16,
-                display: "flex",
-                gap: 8,
-                justifyContent: "flex-end",
-              }}
-            >
-              <button onClick={closeRequestAllModal}>취소</button>
-              <button
-                onClick={sendRequestAll}
-                disabled={readyTargets.length === 0}
-              >
-                전송
-              </button>
-            </div>
-
-            <div style={{ marginTop: 10, color: "#777", fontSize: 12 }}>
-              카카오톡으로 정산 요청 링크가 전송됩니다. (지금은 더미)
-            </div>
-          </div>
         </div>
       )}
     </div>

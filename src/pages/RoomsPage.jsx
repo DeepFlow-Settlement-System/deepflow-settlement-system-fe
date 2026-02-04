@@ -70,13 +70,15 @@ export default function RoomsPage() {
       createdAt: new Date().toISOString(),
     };
 
-    setRooms((prev) => {
-      const next = [newRoom, ...prev];
-      saveRooms(next);
-      return next;
-    });
+    // ✅ 저장
+    const nextRooms = [newRoom, ...rooms];
+    setRooms(nextRooms);
+    saveRooms(nextRooms);
 
     closeModal();
+
+    // ✅ 여기로 이동!
+    navigate(`/rooms/${newRoom.id}/invite`);
   };
 
   return (

@@ -2,18 +2,45 @@
  * [LoginPage]
  * - 카카오 소셜 로그인만 제공 (MVP)
  * - 지금은 더미 버튼 (나중에 카카오 로그인 연동)
+ * - (B-1) 로그인 시 앱 유저 목록(users_v1)에 현재 사용자 등록
  */
 import { useNavigate } from "react-router-dom";
+
+const USERS_KEY = "users_v1";
+const ME_KEY = "user_name_v1";
+
+function upsertUser(name) {
+  try {
+    const raw = localStorage.getItem(USERS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    const arr = Array.isArray(parsed) ? parsed : [];
+
+    if (!arr.includes(name)) {
+      const next = [...arr, name];
+      localStorage.setItem(USERS_KEY, JSON.stringify(next));
+    }
+  } catch {
+    // 깨진 값이면 새로 만들기
+    localStorage.setItem(USERS_KEY, JSON.stringify([name]));
+  }
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
 
   const handleLogin = () => {
-    // TODO: 나중에 카카오 로그인 성공 후 처리
     console.log("login clicked");
 
-    // 더미 로그인 통과 처리
+    // ✅ 더미 로그인 통과 처리
     localStorage.setItem("isLoggedIn", "true");
+
+    // ✅ (더미) 로그인 사용자 이름
+    // 지금은 기본값 "현서". 나중에 카카오 로그인 성공 시 닉네임으로 교체하면 됨.
+    const me = localStorage.getItem(ME_KEY) || "현서";
+    localStorage.setItem(ME_KEY, me);
+
+    // ✅ 앱 유저 목록에 등록 (B-1 초대에서 사용)
+    upsertUser(me);
 
     // rooms로 이동
     navigate("/rooms", { replace: true });
@@ -127,6 +154,8 @@ export default function LoginPage() {
         <div style={{ marginTop: 12, fontSize: 12, color: "#9ca3af" }}>
           로그인 버튼은 현재 더미입니다. (API 연결 시 실제 카카오 로그인으로
           교체)
+          <br />
+          (B-1) 로그인 시 앱 유저 목록(users_v1)에 자동 등록됩니다.
         </div>
       </div>
     </div>
