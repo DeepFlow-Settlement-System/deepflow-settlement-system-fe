@@ -1,7 +1,20 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-const STORAGE_KEY = "rooms_v2"; // v1 쓰고 있으면 키 바꿔서 충돌 방지 추천
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+
+const STORAGE_KEY = "rooms_v2";
 
 function loadRooms() {
   try {
@@ -30,7 +43,7 @@ export default function RoomsPage() {
   const navigate = useNavigate();
 
   const [rooms, setRooms] = useState(() => loadRooms());
-  const [isOpen, setIsOpen] = useState(false);
+  const [open, setOpen] = useState(false);
 
   const [roomName, setRoomName] = useState("");
   const today = toDateKey(new Date());
@@ -46,17 +59,19 @@ export default function RoomsPage() {
     );
   }, [roomName, startDate, endDate]);
 
-  const openModal = () => {
+  const resetForm = () => {
     setRoomName("");
     setStartDate(today);
     setEndDate(today);
-    setIsOpen(true);
   };
 
-  const closeModal = () => setIsOpen(false);
+  const openModal = () => {
+    resetForm();
+    setOpen(true);
+  };
 
   const goRoom = (roomId) => {
-    navigate(`/rooms/${roomId}`);
+    navigate(`/rooms/${roomId}/invite`);
   };
 
   const handleCreateRoom = () => {
@@ -70,165 +85,131 @@ export default function RoomsPage() {
       createdAt: new Date().toISOString(),
     };
 
-    // ✅ 저장
     const nextRooms = [newRoom, ...rooms];
     setRooms(nextRooms);
     saveRooms(nextRooms);
 
-    closeModal();
-
-    // ✅ 여기로 이동!
+    setOpen(false);
     navigate(`/rooms/${newRoom.id}/invite`);
   };
 
   return (
-    <div style={{ padding: 16 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
-        }}
-      >
-        <h1 style={{ margin: 0 }}>Rooms</h1>
-        <button onClick={openModal}>+ 방 만들기</button>
-      </div>
-
-      <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-        {rooms.length === 0 && (
-          <div style={{ color: "#777" }}>
-            아직 방이 없습니다. <b>+ 방 만들기</b>로 생성해보세요.
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto max-w-3xl px-4 py-8">
+        {/* 헤더 */}
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Rooms</h1>
+            <p className="text-sm text-muted-foreground">
+              여행 방을 만들고 멤버를 초대해 정산을 시작해요.
+            </p>
           </div>
-        )}
 
-        {rooms.map((r) => (
-          <button
-            key={r.id}
-            onClick={() => goRoom(r.id)}
-            style={{
-              textAlign: "left",
-              padding: 12,
-              borderRadius: 10,
-              border: "1px solid #eee",
-              background: "white",
-              cursor: "pointer",
-            }}
-          >
-            <div style={{ fontWeight: 700 }}>{r.name}</div>
-            <div style={{ fontSize: 12, color: "#777", marginTop: 4 }}>
-              일정: {r.tripStart ?? "?"} ~ {r.tripEnd ?? "?"}
-            </div>
-            <div style={{ fontSize: 12, color: "#777" }}>id: {r.id}</div>
-          </button>
-        ))}
-      </div>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={openModal}>+ 방 만들기</Button>
+            </DialogTrigger>
 
-      {isOpen && (
-        <div
-          onClick={closeModal}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.35)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 460,
-              background: "white",
-              borderRadius: 12,
-              padding: 16,
-              border: "1px solid #eee",
-            }}
-          >
-            <h3 style={{ marginTop: 0 }}>방 만들기</h3>
+            <DialogContent className="sm:max-w-[460px]">
+              <DialogHeader>
+                <DialogTitle>방 만들기</DialogTitle>
+              </DialogHeader>
 
-            <label style={{ display: "block", fontWeight: 700, marginTop: 8 }}>
-              방 이름
-            </label>
-            <input
-              value={roomName}
-              onChange={(e) => setRoomName(e.target.value)}
-              placeholder="예) 제주도 여행"
-              style={{
-                width: "100%",
-                marginTop: 6,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid #ddd",
-              }}
-            />
-
-            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-              <div style={{ fontWeight: 700 }}>여행 일정</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <label
-                  style={{ display: "flex", gap: 6, alignItems: "center" }}
-                >
-                  <span style={{ fontSize: 12, color: "#555" }}>시작</span>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    style={{
-                      padding: "6px 8px",
-                      borderRadius: 8,
-                      border: "1px solid #ddd",
-                    }}
+              <div className="grid gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="roomName">방 이름</Label>
+                  <Input
+                    id="roomName"
+                    value={roomName}
+                    onChange={(e) => setRoomName(e.target.value)}
+                    placeholder="예) 제주도 여행"
+                    autoFocus
                   />
-                </label>
+                </div>
 
-                <label
-                  style={{ display: "flex", gap: 6, alignItems: "center" }}
-                >
-                  <span style={{ fontSize: 12, color: "#555" }}>종료</span>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                    style={{
-                      padding: "6px 8px",
-                      borderRadius: 8,
-                      border: "1px solid #ddd",
-                    }}
-                  />
-                </label>
+                <div className="grid gap-2">
+                  <Label>여행 일정</Label>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="grid gap-2">
+                      <Label className="text-xs text-muted-foreground">
+                        시작
+                      </Label>
+                      <Input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="grid gap-2">
+                      <Label className="text-xs text-muted-foreground">
+                        종료
+                      </Label>
+                      <Input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {startDate > endDate && (
+                    <p className="text-sm font-medium text-destructive">
+                      시작일이 종료일보다 늦을 수 없어요.
+                    </p>
+                  )}
+                </div>
               </div>
 
-              {startDate > endDate && (
-                <div style={{ fontSize: 12, color: "#b91c1c" }}>
-                  시작일이 종료일보다 늦을 수 없어요.
-                </div>
-              )}
-            </div>
-
-            <div
-              style={{
-                marginTop: 16,
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: 8,
-              }}
-            >
-              <button onClick={closeModal}>취소</button>
-              <button onClick={handleCreateRoom} disabled={!canCreate}>
-                생성
-              </button>
-            </div>
-
-            <div style={{ marginTop: 10, fontSize: 12, color: "#777" }}>
-              (더미) 방 정보는 localStorage에 저장됩니다.
-            </div>
-          </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button variant="outline" onClick={() => setOpen(false)}>
+                  취소
+                </Button>
+                <Button onClick={handleCreateRoom} disabled={!canCreate}>
+                  생성
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
-      )}
+
+        {/* 리스트 */}
+        <div className="mt-6 grid gap-3">
+          {rooms.length === 0 ? (
+            <Card>
+              <CardContent className="p-6">
+                <div className="text-sm text-muted-foreground">
+                  아직 방이 없습니다. <b>+ 방 만들기</b>로 생성해보세요.
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            rooms.map((r) => (
+              <Card
+                key={r.id}
+                className="cursor-pointer transition hover:shadow-sm"
+                onClick={() => goRoom(r.id)}
+              >
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{r.name}</CardTitle>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="text-sm text-muted-foreground">
+                    일정: {r.tripStart ?? "?"} ~ {r.tripEnd ?? "?"}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    id: {r.id}
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
+
+        <p className="mt-6 text-xs text-muted-foreground">
+          (더미) 방 정보는 localStorage에 저장됩니다.
+        </p>
+      </div>
     </div>
   );
 }

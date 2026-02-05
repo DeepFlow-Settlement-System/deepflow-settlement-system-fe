@@ -44,16 +44,13 @@ export default function RoomInvitePage() {
   const navigate = useNavigate();
   const me = loadMe();
 
-  // ✅ 앱 유저 목록
   const [users, setUsers] = useState(() => {
     const u = loadUsers();
-    // 최소한 나 자신은 들어가게
     const base = u.includes(me) ? u : [me, ...u];
     saveUsers(base);
     return base;
   });
 
-  // ✅ 방 멤버 목록
   const [members, setMembers] = useState(() => {
     const m = loadMembers(roomId);
     const base = m.length === 0 ? [me] : m;
@@ -69,9 +66,8 @@ export default function RoomInvitePage() {
     saveMembers(roomId, unique);
   };
 
-  // ✅ 체크박스로 멤버 추가/제거
   const toggleMember = (name) => {
-    if (name === me) return; // 나 자신은 항상 포함
+    if (name === me) return;
     if (members.includes(name)) {
       persistMembers(members.filter((m) => m !== name));
     } else {
@@ -79,14 +75,12 @@ export default function RoomInvitePage() {
     }
   };
 
-  // ✅ 검색 필터
   const filteredUsers = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return users;
     return users.filter((u) => u.toLowerCase().includes(q));
   }, [users, query]);
 
-  // ✅ 테스트용: 유저 추가 (부트캠프 데모에서 매우 유용)
   const [newUser, setNewUser] = useState("");
 
   const addTestUser = () => {
@@ -137,7 +131,6 @@ export default function RoomInvitePage() {
         </div>
       )}
 
-      {/* (옵션) 나중에 B-2로 대체될 버튼 자리 */}
       <div
         style={{
           border: "1px solid #eee",
@@ -170,7 +163,6 @@ export default function RoomInvitePage() {
         </div>
       </div>
 
-      {/* 테스트 유저 추가 */}
       <div
         style={{
           marginTop: 14,
@@ -205,7 +197,6 @@ export default function RoomInvitePage() {
         </div>
       </div>
 
-      {/* 유저 검색 + 선택 */}
       <div
         style={{
           marginTop: 14,
@@ -273,7 +264,6 @@ export default function RoomInvitePage() {
         </div>
       </div>
 
-      {/* 현재 멤버 */}
       <div
         style={{
           marginTop: 14,
@@ -303,7 +293,6 @@ export default function RoomInvitePage() {
         </div>
       </div>
 
-      {/* 하단 */}
       <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
         <button onClick={goRoomHome}>나중에</button>
         <button onClick={goRoomHome} style={{ fontWeight: 900 }}>

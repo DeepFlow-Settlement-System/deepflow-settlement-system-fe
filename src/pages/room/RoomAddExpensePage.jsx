@@ -1,20 +1,23 @@
-// src/pages/room/RoomAddExpensePage.jsx
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { apiFetch, authHeaders } from "../../api/client";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const EXPENSES_KEY = (roomId) => `expenses_v2_${roomId}`;
 const MEMBERS_KEY = (roomId) => `room_members_v1_${roomId}`;
 const ME_KEY = "user_name_v1";
 
 const SPLIT = {
-  EQUAL: "EQUAL", // 지출 전체 n빵
-  ITEM: "ITEM", // 품목 혼합(각 품목이 PER_PERSON 또는 TOTAL_SPLIT)
+  EQUAL: "EQUAL",
+  ITEM: "ITEM", // 혼합정산
 };
 
-const ITEM_SPLIT = {
-  PER_PERSON: "PER_PERSON", // 1인당 가격
-  TOTAL_SPLIT: "TOTAL_SPLIT", // 품목 총액 n빵(총액/선택 인원)
+const ITEM_MODE = {
+  PER_PERSON: "PER_PERSON",
+  SHARED_SPLIT: "SHARED_SPLIT",
 };
 
 function loadExpenses(roomId) {
@@ -54,59 +57,41 @@ function toDateKey(date) {
   return `${y}-${m}-${dd}`;
 }
 
-function newItem(members) {
+function newItem(members, patch = {}) {
   return {
     id: String(Date.now()) + Math.random().toString(16).slice(2),
-    name: "",
-    split: ITEM_SPLIT.PER_PERSON,
-    pricePerPerson: "",
-    amount: "", // TOTAL_SPLIT용
+    title: "",
+    mode: ITEM_MODE.PER_PERSON,
+    unitPrice: "",
+    totalPrice: "",
     users: members.length ? [members[0]] : [],
+    ...patch,
   };
 }
 
-/** OCR 응답(미정)을 최대한 방어적으로 표준 형태로 변환 */
-function normalizeOcrAnalysis(raw) {
-  // raw가 ApiResponse이면 raw.data가 실제일 가능성
-  const data = raw?.data ?? raw ?? {};
-
-  const title =
-    data.storeName || data.merchantName || data.shopName || data.title || "";
-
-  const dateKey =
-    data.dateKey ||
-    data.date ||
-    (data.purchasedAt ? toDateKey(data.purchasedAt) : "") ||
-    "";
-
-  const total = Number(data.total || data.totalAmount || data.sum || 0) || 0;
-
-  let items = [];
-  const srcItems = data.items || data.lines || data.products || [];
-  if (Array.isArray(srcItems)) {
-    items = srcItems
-      .map((it) => ({
-        name: it.name || it.itemName || it.productName || "",
-        amount: Number(it.amount || it.total || it.price || 0) || 0,
-      }))
-      .filter((it) => it.name || it.amount > 0);
-  }
-
-  return { title, dateKey, total, items };
-}
-
-/** 서버에서 expenseId 찾기 (응답 구조가 미정이라 fallback 여러 개) */
-function extractExpenseId(resJson) {
-  const d = resJson?.data ?? resJson ?? {};
-  return d.expenseId || d.id || d.expense?.id || d.expense?.expenseId || null;
+/**
+ * ✅ UI 개발용 더미 OCR 결과
+ * 나중에 API 붙이면 여기만 교체하면 됨:
+ *   const data = await ocrReceipt(file)
+ */
+async function fakeOcr(_file) {
+  await new Promise((r) => setTimeout(r, 900));
+  return {
+    merchant: "카페(더미)",
+    paidAt: new Date().toISOString(),
+    total: 24500,
+    items: [
+      { name: "아메리카노", price: 4500, qty: 2 },
+      { name: "라떼", price: 5000, qty: 2 },
+      { name: "케이크", price: 10500, qty: 1 },
+    ],
+    rawText: "(더미 OCR 텍스트)",
+  };
 }
 
 export default function RoomAddExpensePage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
-
-  // ⚠️ 임시: groupId가 roomId와 동일하다고 가정
-  const groupId = roomId;
 
   const members = useMemo(() => {
     const m = loadMembers(roomId);
@@ -120,7 +105,7 @@ export default function RoomAddExpensePage() {
 
   const [splitType, setSplitType] = useState(SPLIT.ITEM);
 
-  // 지출 전체 n빵용
+  // 전체 n빵
   const [amount, setAmount] = useState("");
   const [participants, setParticipants] = useState(() => members);
 
@@ -130,9 +115,8 @@ export default function RoomAddExpensePage() {
     );
   };
 
-  // 품목 혼합용
+  // 혼합정산(품목)
   const [items, setItems] = useState(() => [newItem(members)]);
-
   const addItem = () => setItems((prev) => [...prev, newItem(members)]);
   const removeItem = (id) =>
     setItems((prev) => prev.filter((it) => it.id !== id));
@@ -156,16 +140,12 @@ export default function RoomAddExpensePage() {
     );
   };
 
-  // ✅ 혼합 품목 총합 계산
   const totalItemsAmount = useMemo(() => {
     return items.reduce((sum, it) => {
-      const usersCnt = Array.isArray(it.users) ? it.users.length : 0;
-      const split = it.split || ITEM_SPLIT.PER_PERSON;
-
-      if (split === ITEM_SPLIT.TOTAL_SPLIT) {
-        return sum + (Number(it.amount) || 0);
-      }
-      return sum + (Number(it.pricePerPerson) || 0) * usersCnt;
+      const users = Array.isArray(it.users) ? it.users.length : 0;
+      if (it.mode === ITEM_MODE.SHARED_SPLIT)
+        return sum + (Number(it.totalPrice) || 0);
+      return sum + (Number(it.unitPrice) || 0) * users;
     }, 0);
   }, [items]);
 
@@ -178,21 +158,17 @@ export default function RoomAddExpensePage() {
       return true;
     }
 
-    // 품목 혼합
     if (!items || items.length === 0) return false;
-
     for (const it of items) {
-      if ((it.name || "").trim().length === 0) return false;
+      if ((it.title || "").trim().length === 0) return false;
       if (!Array.isArray(it.users) || it.users.length === 0) return false;
 
-      const split = it.split || ITEM_SPLIT.PER_PERSON;
-      if (split === ITEM_SPLIT.TOTAL_SPLIT) {
-        if (!(Number(it.amount) > 0)) return false;
+      if (it.mode === ITEM_MODE.SHARED_SPLIT) {
+        if (!(Number(it.totalPrice) > 0)) return false;
       } else {
-        if (!(Number(it.pricePerPerson) > 0)) return false;
+        if (!(Number(it.unitPrice) > 0)) return false;
       }
     }
-
     return totalItemsAmount > 0;
   }, [title, splitType, amount, participants, items, totalItemsAmount]);
 
@@ -225,16 +201,16 @@ export default function RoomAddExpensePage() {
             participants: [],
             items: items.map((it) => ({
               id: it.id,
-              name: (it.name || "").trim(),
-              split: it.split || ITEM_SPLIT.PER_PERSON,
-              pricePerPerson:
-                (it.split || ITEM_SPLIT.PER_PERSON) === ITEM_SPLIT.PER_PERSON
-                  ? Number(it.pricePerPerson)
-                  : 0,
-              amount:
-                (it.split || ITEM_SPLIT.PER_PERSON) === ITEM_SPLIT.TOTAL_SPLIT
-                  ? Number(it.amount)
-                  : 0,
+              title: (it.title || "").trim(),
+              mode: it.mode,
+              unitPrice:
+                it.mode === ITEM_MODE.PER_PERSON
+                  ? Number(it.unitPrice) || 0
+                  : undefined,
+              totalPrice:
+                it.mode === ITEM_MODE.SHARED_SPLIT
+                  ? Number(it.totalPrice) || 0
+                  : undefined,
               users: Array.isArray(it.users) ? it.users.slice() : [],
             })),
           };
@@ -243,604 +219,447 @@ export default function RoomAddExpensePage() {
     navigate(`/rooms/${roomId}`);
   };
 
-  // ---------------------------
-  // OCR 연동 (스키마 미정 대응)
-  // ---------------------------
-  const [ocrState, setOcrState] = useState("IDLE"); // IDLE | UPLOADING | PROCESSING | DONE | FAILED
-  const [ocrMsg, setOcrMsg] = useState("");
-  const [ocrExpenseId, setOcrExpenseId] = useState(null);
+  // ---------- OCR UI only ----------
+  const [receiptFile, setReceiptFile] = useState(null);
+  const [receiptUrl, setReceiptUrl] = useState("");
+  const [ocrStatus, setOcrStatus] = useState("IDLE"); // IDLE | RUNNING | DONE | ERROR
+  const [ocrError, setOcrError] = useState("");
 
-  async function createExpenseDraftOnServer() {
-    // ⚠️ 최소 request body는 백엔드 명세 확인 필요
-    const resJson = await apiFetch(`/api/groups/${groupId}/expenses`, {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        title: "영수증 분석 중",
-        // dateKey 형태가 필요할 수도 있어 안전하게 둘 다 넣어둠
-        date: new Date().toISOString(),
-        dateKey: toDateKey(new Date()),
-      }),
-    });
+  const [ocrResult, setOcrResult] = useState(null); // {merchant, paidAt, total, items, rawText}
 
-    const id = extractExpenseId(resJson);
-    if (!id) throw new Error("expenseId를 응답에서 찾지 못했습니다.");
-    return id;
-  }
+  const onPickReceipt = (file) => {
+    if (!file) return;
+    setReceiptFile(file);
+    setReceiptUrl(URL.createObjectURL(file));
+    setOcrStatus("IDLE");
+    setOcrError("");
+    setOcrResult(null);
+  };
 
-  async function uploadReceiptToServer(expenseId, file) {
-    const form = new FormData();
-    // ⚠️ field name이 image/file 중 무엇인지 미정이라 둘 다 넣는 방식(서버가 하나만 받으면 무시될 수 있음)
-    form.append("image", file);
-    form.append("file", file);
-
-    await apiFetch(`/api/groups/${groupId}/${expenseId}/img`, {
-      method: "POST",
-      headers: authHeaders(), // multipart는 Content-Type 직접 지정 X
-      body: form,
-    });
-  }
-
-  async function pollOcrStatus(expenseId) {
-    // 상태값 enum 미정 → 문자열 포함으로 방어
-    const maxTry = 40; // 80초 정도
-    for (let i = 0; i < maxTry; i++) {
-      const resJson = await apiFetch(`/api/expenses/${expenseId}/status`, {
-        headers: authHeaders(),
-      });
-
-      const d = resJson?.data ?? resJson ?? {};
-      const status = String(
-        d.status || d.state || d.result || "",
-      ).toUpperCase();
-
-      if (
-        status.includes("DONE") ||
-        status.includes("COMPLETE") ||
-        status.includes("SUCCESS")
-      ) {
-        return true;
-      }
-      if (status.includes("FAIL") || status.includes("ERROR")) {
-        throw new Error("OCR 분석 실패");
-      }
-
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    throw new Error("OCR 분석 시간이 너무 오래 걸립니다.");
-  }
-
-  async function fetchOcrAnalysis(expenseId) {
-    const resJson = await apiFetch(`/api/expenses/${expenseId}/analysis`, {
-      headers: authHeaders(),
-    });
-    return normalizeOcrAnalysis(resJson);
-  }
-
-  async function handleReceiptFile(file) {
-    setOcrMsg("");
-    setOcrState("UPLOADING");
-
+  const runOcr = async () => {
+    if (!receiptFile) return;
+    setOcrStatus("RUNNING");
+    setOcrError("");
     try {
-      const expenseId = await createExpenseDraftOnServer();
-      setOcrExpenseId(expenseId);
-
-      setOcrMsg("영수증 업로드 중…");
-      await uploadReceiptToServer(expenseId, file);
-
-      setOcrState("PROCESSING");
-      setOcrMsg("영수증 분석 중… (잠시만)");
-
-      await pollOcrStatus(expenseId);
-
-      const {
-        title: oTitle,
-        dateKey,
-        total,
-        items: oItems,
-      } = await fetchOcrAnalysis(expenseId);
-
-      // 폼 자동 채우기
-      if (oTitle) setTitle(oTitle);
-      if (dateKey) setDate(dateKey);
-
-      setSplitType(SPLIT.ITEM);
-
-      // items가 있으면 품목으로, 없으면 합계 1줄로
-      if (oItems && oItems.length > 0) {
-        setItems(
-          oItems.map((it) => ({
-            id: String(Date.now()) + Math.random().toString(16).slice(2),
-            name: it.name || "",
-            // 기본은 TOTAL_SPLIT(총액)으로 넣고, 사용자가 PER_PERSON로 바꾸게
-            split: ITEM_SPLIT.TOTAL_SPLIT,
-            amount: String(it.amount || 0),
-            pricePerPerson: "",
-            users: members.slice(), // 일단 전체 선택
-          })),
-        );
-      } else if (total > 0) {
-        setItems([
-          {
-            id: String(Date.now()),
-            name: "영수증 합계",
-            split: ITEM_SPLIT.TOTAL_SPLIT,
-            amount: String(total),
-            pricePerPerson: "",
-            users: members.slice(),
-          },
-        ]);
-      }
-
-      setOcrState("DONE");
-      setOcrMsg("분석 완료! 내용을 확인하고 저장해 주세요.");
-    } catch (err) {
-      setOcrState("FAILED");
-      setOcrMsg(err?.message || "OCR 처리 중 오류가 발생했습니다.");
+      // ✅ 나중에 API 붙이면 여기만 교체
+      const data = await fakeOcr(receiptFile);
+      setOcrResult(data);
+      setOcrStatus("DONE");
+    } catch (e) {
+      setOcrStatus("ERROR");
+      setOcrError(e?.message || "OCR 실패");
     }
-  }
+  };
+
+  const applyOcrToForm = () => {
+    if (!ocrResult) return;
+
+    // 제목/날짜/총액 자동 채움 (비어있을 때만)
+    if (!title.trim()) {
+      setTitle(
+        ocrResult.merchant ? `${ocrResult.merchant} 영수증` : "영수증 지출",
+      );
+    }
+
+    if (ocrResult.paidAt) {
+      try {
+        setDate(toDateKey(new Date(ocrResult.paidAt)));
+      } catch {}
+    }
+
+    if (typeof ocrResult.total === "number" && ocrResult.total > 0) {
+      setAmount(String(ocrResult.total));
+    }
+
+    const arr = Array.isArray(ocrResult.items) ? ocrResult.items : [];
+    if (arr.length > 0) {
+      setSplitType(SPLIT.ITEM);
+      setItems((prev) => {
+        const mapped = arr.slice(0, 15).map((it) =>
+          newItem(members, {
+            title: String(it.name || "").trim() || "품목",
+            mode: ITEM_MODE.PER_PERSON,
+            unitPrice: String(Number(it.price) || 0),
+            users: members.slice(), // MVP: 일단 전원 체크 -> 사용자가 수정
+          }),
+        );
+
+        const first = prev[0];
+        const isFirstEmpty =
+          prev.length === 1 &&
+          !first?.title?.trim() &&
+          !String(first?.unitPrice || "").trim() &&
+          !String(first?.totalPrice || "").trim();
+
+        return isFirstEmpty ? mapped : [...mapped, ...prev];
+      });
+    }
+  };
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>지출 등록</h2>
-
-      {/* ✅ OCR 업로드 블록 */}
-      <div
-        style={{
-          border: "1px solid #eee",
-          borderRadius: 12,
-          padding: 12,
-          background: "white",
-          maxWidth: 760,
-          marginBottom: 12,
-          display: "grid",
-          gap: 10,
-        }}
-      >
-        <div style={{ fontWeight: 900 }}>영수증으로 자동 입력</div>
-        <div style={{ fontSize: 12, color: "#6b7280" }}>
-          사진을 올리면 제목/날짜/품목/금액을 자동으로 채웁니다. (이후 반드시
-          확인/수정)
-        </div>
-
-        <input
-          type="file"
-          accept="image/*"
-          disabled={ocrState === "UPLOADING" || ocrState === "PROCESSING"}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) handleReceiptFile(f);
-            e.target.value = ""; // 같은 파일 다시 선택 가능
-          }}
-        />
-
-        {(ocrState === "UPLOADING" || ocrState === "PROCESSING") && (
-          <div style={{ fontSize: 13, color: "#1976d2", fontWeight: 700 }}>
-            {ocrMsg || "처리 중…"}
+    <div className="space-y-4">
+      {/* OCR UI */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">영수증 업로드</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-2">
+            <Label>영수증 이미지</Label>
+            <Input
+              type="file"
+              accept="image/*"
+              onChange={(e) => onPickReceipt(e.target.files?.[0])}
+            />
+            <p className="text-xs text-muted-foreground">
+              지금은 UI만 준비해두고, 나중에 OCR API만 연결합니다.
+            </p>
           </div>
-        )}
 
-        {ocrState === "DONE" && (
-          <div style={{ fontSize: 13, color: "#2e7d32", fontWeight: 800 }}>
-            {ocrMsg}
-            {ocrExpenseId ? (
-              <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-                (서버 expenseId: {ocrExpenseId})
-              </div>
-            ) : null}
+          {receiptUrl && (
+            <div className="grid gap-2">
+              <div className="text-sm font-medium">미리보기</div>
+              <img
+                src={receiptUrl}
+                alt="receipt preview"
+                className="max-h-72 w-auto rounded-lg border"
+              />
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              onClick={runOcr}
+              disabled={!receiptFile || ocrStatus === "RUNNING"}
+            >
+              {ocrStatus === "RUNNING" ? "인식 중..." : "인식하기(OCR)"}
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setReceiptFile(null);
+                setReceiptUrl("");
+                setOcrResult(null);
+                setOcrStatus("IDLE");
+                setOcrError("");
+              }}
+              disabled={ocrStatus === "RUNNING"}
+            >
+              초기화
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={applyOcrToForm}
+              disabled={!ocrResult}
+            >
+              폼에 적용
+            </Button>
           </div>
-        )}
 
-        {ocrState === "FAILED" && (
-          <div style={{ fontSize: 13, color: "#b91c1c", fontWeight: 800 }}>
-            {ocrMsg}
-            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setOcrState("IDLE");
-                  setOcrMsg("");
-                  setOcrExpenseId(null);
-                }}
+          {ocrStatus === "ERROR" && (
+            <div className="text-sm text-destructive">
+              인식 실패: {ocrError}
+            </div>
+          )}
+
+          {ocrResult && (
+            <Card className="border-dashed">
+              <CardContent className="p-4 space-y-2">
+                <div className="text-sm font-semibold">인식 결과(미리보기)</div>
+                <div className="text-sm text-muted-foreground">
+                  가맹점:{" "}
+                  <b className="text-foreground">{ocrResult.merchant || "-"}</b>{" "}
+                  · 총액:{" "}
+                  <b className="text-foreground">
+                    {Number(ocrResult.total || 0).toLocaleString()}원
+                  </b>
+                </div>
+
+                <div className="mt-2 grid gap-2">
+                  {(ocrResult.items || []).length === 0 ? (
+                    <div className="text-sm text-muted-foreground">
+                      품목을 찾지 못했어요. (나중에 API 연결 시 개선)
+                    </div>
+                  ) : (
+                    <div className="grid gap-2">
+                      {(ocrResult.items || []).slice(0, 10).map((it, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                        >
+                          <span className="font-medium">{it.name}</span>
+                          <span className="text-muted-foreground">
+                            {Number(it.price || 0).toLocaleString()}원
+                            {it.qty ? ` × ${it.qty}` : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 기본 입력 */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">지출 정보</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2">
+            <Label>제목</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="예) 카페, 숙소, 택시"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label>날짜</Label>
+              <Input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label>결제자</Label>
+              <select
+                value={payerName}
+                onChange={(e) => setPayerName(e.target.value)}
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm"
               >
-                확인(수동 입력)
-              </button>
+                {members.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-        )}
-      </div>
 
-      <div style={{ display: "grid", gap: 12, maxWidth: 760 }}>
-        <label style={{ fontWeight: 800 }}>
-          제목
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="예) 카페, 숙소, 택시"
-            style={{
-              width: "100%",
-              marginTop: 6,
-              padding: 10,
-              borderRadius: 10,
-              border: "1px solid #ddd",
-            }}
-          />
-        </label>
-
-        <div
-          style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}
-        >
-          <label style={{ fontWeight: 800 }}>
-            날짜
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              style={{
-                width: "100%",
-                marginTop: 6,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid #ddd",
-              }}
-            />
-          </label>
-
-          <label style={{ fontWeight: 800 }}>
-            결제자
-            <select
-              value={payerName}
-              onChange={(e) => setPayerName(e.target.value)}
-              style={{
-                width: "100%",
-                marginTop: 6,
-                padding: 10,
-                borderRadius: 10,
-                border: "1px solid #ddd",
-              }}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={splitType === SPLIT.ITEM ? "default" : "outline"}
+              onClick={() => setSplitType(SPLIT.ITEM)}
             >
-              {members.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {/* 분배 방식 */}
-        <div
-          style={{
-            border: "1px solid #eee",
-            borderRadius: 12,
-            padding: 12,
-            background: "white",
-          }}
-        >
-          <div style={{ fontWeight: 900 }}>분배 방식</div>
-
-          <div
-            style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap" }}
-          >
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input
-                type="radio"
-                checked={splitType === SPLIT.EQUAL}
-                onChange={() => setSplitType(SPLIT.EQUAL)}
-              />
-              지출 전체 n빵
-            </label>
-
-            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input
-                type="radio"
-                checked={splitType === SPLIT.ITEM}
-                onChange={() => setSplitType(SPLIT.ITEM)}
-              />
-              품목 혼합(품목별 + 품목 n빵)
-            </label>
+              혼합정산(품목별 + 공동n빵)
+            </Button>
+            <Button
+              type="button"
+              variant={splitType === SPLIT.EQUAL ? "default" : "outline"}
+              onClick={() => setSplitType(SPLIT.EQUAL)}
+            >
+              전체 n빵(기본)
+            </Button>
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        {/* 지출 전체 n빵 UI */}
-        {splitType === SPLIT.EQUAL && (
-          <div
-            style={{
-              border: "1px solid #eee",
-              borderRadius: 12,
-              padding: 12,
-              background: "white",
-              display: "grid",
-              gap: 10,
-            }}
-          >
-            <label style={{ fontWeight: 800 }}>
-              총 금액
-              <input
+      {/* 전체 n빵 */}
+      {splitType === SPLIT.EQUAL && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">전체 n빵</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid gap-2">
+              <Label>총 금액</Label>
+              <Input
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="예) 300000"
                 inputMode="numeric"
-                style={{
-                  width: "100%",
-                  marginTop: 6,
-                  padding: 10,
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                }}
               />
-            </label>
-
-            <div style={{ fontWeight: 800 }}>참여자</div>
-            <div
-              style={{
-                display: "grid",
-                gap: 8,
-                border: "1px solid #f3f4f6",
-                borderRadius: 12,
-                padding: 12,
-                background: "white",
-              }}
-            >
-              {members.map((m) => (
-                <label
-                  key={m}
-                  style={{ display: "flex", gap: 8, alignItems: "center" }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={participants.includes(m)}
-                    onChange={() => toggleParticipant(m)}
-                  />
-                  <span>{m}</span>
-                </label>
-              ))}
-              {participants.length === 0 && (
-                <div style={{ fontSize: 12, color: "#b91c1c" }}>
-                  참여자를 최소 1명 이상 선택하세요.
-                </div>
-              )}
             </div>
-          </div>
-        )}
 
-        {/* 품목 혼합 UI */}
-        {splitType === SPLIT.ITEM && (
-          <div
-            style={{
-              border: "1px solid #eee",
-              borderRadius: 12,
-              padding: 12,
-              background: "white",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
-            >
-              <div>
-                <div style={{ fontWeight: 900 }}>품목</div>
-                <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-                  품목별(1인당) / 품목 n빵(총액) 둘 다 가능
-                </div>
+            <div className="grid gap-2">
+              <Label>참여자</Label>
+              <div className="grid gap-2 rounded-lg border p-3">
+                {members.map((m) => (
+                  <label
+                    key={m}
+                    className="flex items-center justify-between text-sm"
+                  >
+                    <span>{m}</span>
+                    <input
+                      type="checkbox"
+                      checked={participants.includes(m)}
+                      onChange={() => toggleParticipant(m)}
+                    />
+                  </label>
+                ))}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 12, color: "#6b7280" }}>총 합계</div>
-                <div style={{ fontSize: 18, fontWeight: 900 }}>
+      {/* 혼합정산 */}
+      {splitType === SPLIT.ITEM && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">품목(혼합)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-end justify-between gap-3 flex-wrap">
+              <div className="text-sm text-muted-foreground">
+                품목마다 <b>개별(1인당)</b> 또는 <b>공동(n빵)</b>을 선택하세요.
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-muted-foreground">총 합계</div>
+                <div className="text-lg font-bold">
                   {totalItemsAmount.toLocaleString()}원
                 </div>
               </div>
             </div>
 
-            <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+            <div className="grid gap-3">
               {items.map((it, idx) => {
-                const usersCnt = Array.isArray(it.users) ? it.users.length : 0;
-                const split = it.split || ITEM_SPLIT.PER_PERSON;
-
-                const perPerson = Number(it.pricePerPerson) || 0;
-                const total = Number(it.amount) || 0;
-
-                const itemTotal =
-                  split === ITEM_SPLIT.TOTAL_SPLIT
-                    ? total
-                    : perPerson * usersCnt;
-
-                const hint =
-                  split === ITEM_SPLIT.TOTAL_SPLIT
-                    ? `품목 총액 ${total.toLocaleString()}원 ÷ ${usersCnt}명`
-                    : `1인당 ${perPerson.toLocaleString()}원 × ${usersCnt}명`;
+                const cnt = Array.isArray(it.users) ? it.users.length : 0;
+                const unit = Number(it.unitPrice) || 0;
+                const total = Number(it.totalPrice) || 0;
+                const lineTotal =
+                  it.mode === ITEM_MODE.SHARED_SPLIT ? total : unit * cnt;
 
                 return (
-                  <div
-                    key={it.id}
-                    style={{
-                      border: "1px solid #f3f4f6",
-                      borderRadius: 12,
-                      padding: 12,
-                      background: "white",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ fontWeight: 900 }}>품목 {idx + 1}</div>
-                      <button
-                        onClick={() => removeItem(it.id)}
-                        disabled={items.length <= 1}
-                      >
-                        삭제
-                      </button>
-                    </div>
-
-                    <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-                      <label style={{ fontWeight: 800 }}>
-                        품목명
-                        <input
-                          value={it.name}
-                          onChange={(e) =>
-                            updateItem(it.id, { name: e.target.value })
-                          }
-                          placeholder="예) 아메리카노, 라떼, 케이크"
-                          style={{
-                            width: "100%",
-                            marginTop: 6,
-                            padding: 10,
-                            borderRadius: 10,
-                            border: "1px solid #ddd",
-                          }}
-                        />
-                      </label>
-
-                      <div
-                        style={{ display: "flex", gap: 12, flexWrap: "wrap" }}
-                      >
-                        <label
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                          }}
+                  <Card key={it.id} className="border-dashed">
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-semibold">품목 {idx + 1}</div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => removeItem(it.id)}
+                          disabled={items.length <= 1}
                         >
-                          <input
-                            type="radio"
-                            checked={split === ITEM_SPLIT.PER_PERSON}
-                            onChange={() =>
-                              updateItem(it.id, {
-                                split: ITEM_SPLIT.PER_PERSON,
-                              })
-                            }
-                          />
-                          품목별(1인당)
-                        </label>
-                        <label
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            alignItems: "center",
-                          }}
-                        >
-                          <input
-                            type="radio"
-                            checked={split === ITEM_SPLIT.TOTAL_SPLIT}
-                            onChange={() =>
-                              updateItem(it.id, {
-                                split: ITEM_SPLIT.TOTAL_SPLIT,
-                              })
-                            }
-                          />
-                          품목 n빵(총액)
-                        </label>
+                          삭제
+                        </Button>
                       </div>
 
-                      {split === ITEM_SPLIT.PER_PERSON ? (
-                        <label style={{ fontWeight: 800 }}>
-                          1인당 가격
-                          <input
-                            value={it.pricePerPerson}
+                      <div className="grid gap-2">
+                        <Label>품목명</Label>
+                        <Input
+                          value={it.title}
+                          onChange={(e) =>
+                            updateItem(it.id, { title: e.target.value })
+                          }
+                          placeholder="예) 아메리카노 / 케이크"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant={
+                            it.mode === ITEM_MODE.PER_PERSON
+                              ? "default"
+                              : "outline"
+                          }
+                          onClick={() =>
+                            updateItem(it.id, { mode: ITEM_MODE.PER_PERSON })
+                          }
+                        >
+                          개별(1인당)
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={
+                            it.mode === ITEM_MODE.SHARED_SPLIT
+                              ? "default"
+                              : "outline"
+                          }
+                          onClick={() =>
+                            updateItem(it.id, { mode: ITEM_MODE.SHARED_SPLIT })
+                          }
+                        >
+                          공동(n빵)
+                        </Button>
+                      </div>
+
+                      {it.mode === ITEM_MODE.PER_PERSON ? (
+                        <div className="grid gap-2">
+                          <Label>1인당 가격</Label>
+                          <Input
+                            value={it.unitPrice}
                             onChange={(e) =>
-                              updateItem(it.id, {
-                                pricePerPerson: e.target.value,
-                              })
+                              updateItem(it.id, { unitPrice: e.target.value })
                             }
-                            placeholder="예) 4500"
                             inputMode="numeric"
-                            style={{
-                              width: "100%",
-                              marginTop: 6,
-                              padding: 10,
-                              borderRadius: 10,
-                              border: "1px solid #ddd",
-                            }}
                           />
-                        </label>
+                        </div>
                       ) : (
-                        <label style={{ fontWeight: 800 }}>
-                          품목 총액
-                          <input
-                            value={it.amount}
+                        <div className="grid gap-2">
+                          <Label>총액(참여자 n빵)</Label>
+                          <Input
+                            value={it.totalPrice}
                             onChange={(e) =>
-                              updateItem(it.id, { amount: e.target.value })
+                              updateItem(it.id, { totalPrice: e.target.value })
                             }
-                            placeholder="예) 10000"
                             inputMode="numeric"
-                            style={{
-                              width: "100%",
-                              marginTop: 6,
-                              padding: 10,
-                              borderRadius: 10,
-                              border: "1px solid #ddd",
-                            }}
                           />
-                        </label>
+                        </div>
                       )}
 
-                      <div style={{ fontWeight: 800 }}>먹은 사람</div>
-                      <div
-                        style={{
-                          display: "grid",
-                          gap: 8,
-                          border: "1px solid #f3f4f6",
-                          borderRadius: 12,
-                          padding: 12,
-                          background: "white",
-                        }}
-                      >
-                        {members.map((m) => (
-                          <label
-                            key={m}
-                            style={{
-                              display: "flex",
-                              gap: 8,
-                              alignItems: "center",
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={
-                                Array.isArray(it.users) && it.users.includes(m)
-                              }
-                              onChange={() => toggleItemUser(it.id, m)}
-                            />
-                            <span>{m}</span>
-                          </label>
-                        ))}
+                      <div className="grid gap-2">
+                        <Label>참여자</Label>
+                        <div className="grid gap-2 rounded-lg border p-3">
+                          {members.map((m) => (
+                            <label
+                              key={m}
+                              className="flex items-center justify-between text-sm"
+                            >
+                              <span>{m}</span>
+                              <input
+                                type="checkbox"
+                                checked={
+                                  Array.isArray(it.users) &&
+                                  it.users.includes(m)
+                                }
+                                onChange={() => toggleItemUser(it.id, m)}
+                              />
+                            </label>
+                          ))}
+                        </div>
                       </div>
 
-                      <div style={{ fontSize: 12, color: "#6b7280" }}>
-                        품목 합계: <b>{itemTotal.toLocaleString()}원</b> ({hint}
-                        )
+                      <div className="text-xs text-muted-foreground">
+                        품목 합계: <b>{lineTotal.toLocaleString()}원</b>{" "}
+                        {it.mode === ITEM_MODE.SHARED_SPLIT
+                          ? `(총액 ${total.toLocaleString()}원 ÷ ${cnt || 0}명)`
+                          : `(1인당 ${unit.toLocaleString()}원 × ${cnt}명)`}
                       </div>
-                    </div>
-                  </div>
+                    </CardContent>
+                  </Card>
                 );
               })}
             </div>
 
-            <div style={{ marginTop: 12 }}>
-              <button onClick={addItem}>+ 품목 추가</button>
-            </div>
-          </div>
-        )}
+            <Button type="button" variant="outline" onClick={addItem}>
+              + 품목 추가
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button onClick={() => navigate(-1)}>취소</button>
-          <button onClick={handleSave} disabled={!canSave}>
-            저장
-          </button>
-        </div>
-
-        <div style={{ fontSize: 12, color: "#777" }}>
-          * 지금은 localStorage 저장입니다. 서버 연동 시 저장 로직을 API로
-          바꾸면 됩니다.
-        </div>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" onClick={() => navigate(-1)}>
+          취소
+        </Button>
+        <Button type="button" onClick={handleSave} disabled={!canSave}>
+          저장
+        </Button>
       </div>
     </div>
   );

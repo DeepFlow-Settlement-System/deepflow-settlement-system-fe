@@ -19,21 +19,16 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/login" replace />} />
-
       <Route path="/login" element={<LoginPage />} />
 
       <Route element={<RequireAuth />}>
         <Route path="/rooms" element={<RoomsPage />} />
 
-        {/*room 안으로 들어오면 index가 홈 */}
         <Route path="/rooms/:roomId" element={<RoomLayout />}>
           <Route index element={<RoomHomePage />} />
           <Route path="invite" element={<RoomInvitePage />} />
           <Route path="add-expense" element={<RoomAddExpensePage />} />
-
-          {/* 정산은 탭이 아니라 홈에서 버튼으로 접근(원하면 탭으로 다시 넣어도 됨) */}
           <Route path="settlement" element={<RoomSettlementPage />} />
-
           <Route path="settings" element={<RoomSettingsPage />} />
         </Route>
       </Route>
