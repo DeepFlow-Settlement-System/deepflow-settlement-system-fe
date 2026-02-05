@@ -1,25 +1,19 @@
-// src/pages/room/RoomHomePage.jsx
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+
 const ROOMS_KEY = "rooms_v2";
 const EXPENSES_KEY = (roomId) => `expenses_v2_${roomId}`;
-
-const SPLIT = {
-  EQUAL: "EQUAL",
-  ITEM: "ITEM",
-};
-
-const ITEM_SPLIT = {
-  PER_PERSON: "PER_PERSON",
-  TOTAL_SPLIT: "TOTAL_SPLIT",
-};
 
 function loadRooms() {
   try {
     const raw = localStorage.getItem(ROOMS_KEY);
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
@@ -29,64 +23,63 @@ function loadExpenses(roomId) {
   try {
     const raw = localStorage.getItem(EXPENSES_KEY(roomId));
     if (!raw) return [];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-function toDateKey(date) {
-  const d = new Date(date);
+function toDateKey(input) {
+  const d = new Date(input);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 }
 
-function startOfDay(key) {
-  const [y, m, d] = key.split("-").map(Number);
+function startOfDay(dateKey) {
+  const [y, m, d] = dateKey.split("-").map(Number);
   const dt = new Date(y, m - 1, d);
   dt.setHours(0, 0, 0, 0);
   return dt;
 }
 
-function endOfDay(key) {
-  const dt = startOfDay(key);
+function endOfDay(dateKey) {
+  const dt = startOfDay(dateKey);
   dt.setHours(23, 59, 59, 999);
   return dt;
 }
 
-function buildDateRange(start, end) {
-  if (!start || !end) return [];
+function addDays(dateKey, delta) {
+  const d = startOfDay(dateKey);
+  d.setDate(d.getDate() + delta);
+  return toDateKey(d);
+}
+
+function buildDateRange(startKey, endKey) {
+  if (!startKey || !endKey) return [];
+  if (startKey > endKey) return [];
   const out = [];
-  let cur = start;
-  while (cur <= end) {
+  let cur = startKey;
+  while (cur <= endKey) {
     out.push(cur);
-    const d = startOfDay(cur);
-    d.setDate(d.getDate() + 1);
-    cur = toDateKey(d);
+    cur = addDays(cur, 1);
   }
   return out;
 }
 
-/** ⭐ 혼합 정산 총합 계산 (핵심) */
 function calcExpenseTotal(e) {
-  if (e.splitType !== SPLIT.ITEM) {
-    return Number(e.amount) || 0;
-  }
-
   const items = Array.isArray(e.items) ? e.items : [];
-  return items.reduce((sum, it) => {
-    const users = Array.isArray(it.users) ? it.users : [];
-    const n = users.length;
-    const split = it.split || ITEM_SPLIT.PER_PERSON;
-
-    if (split === ITEM_SPLIT.TOTAL_SPLIT) {
-      return sum + (Number(it.amount) || 0);
-    }
-
-    return sum + (Number(it.pricePerPerson) || 0) * n;
-  }, 0);
+  if (items.length > 0) {
+    return items.reduce((sum, it) => {
+      if (it.mode === "SHARED_SPLIT") return sum + (Number(it.totalPrice) || 0);
+      const unit = Number(it.unitPrice) || 0;
+      const cnt = Array.isArray(it.users) ? it.users.length : 0;
+      return sum + unit * cnt;
+    }, 0);
+  }
+  return Number(e.amount) || 0;
 }
 
 export default function RoomHomePage() {
@@ -97,11 +90,12 @@ export default function RoomHomePage() {
   const [expenses, setExpenses] = useState(() => loadExpenses(roomId));
 
   const room = useMemo(() => {
-    return loadRooms().find((r) => String(r.id) === String(roomId)) || {};
+    const rooms = loadRooms();
+    return rooms.find((r) => String(r.id) === String(roomId)) || null;
   }, [roomId]);
 
-  const tripStart = room.tripStart;
-  const tripEnd = room.tripEnd;
+  const tripStart = room?.tripStart;
+  const tripEnd = room?.tripEnd;
 
   const dateList = useMemo(
     () => buildDateRange(tripStart, tripEnd),
@@ -109,23 +103,23 @@ export default function RoomHomePage() {
   );
 
   const [viewMode, setViewMode] = useState("LIST");
-  const [selectedDate, setSelectedDate] = useState(tripStart || "");
-
-  useEffect(() => {
-    setExpenses(loadExpenses(roomId));
-  }, [roomId, location.key]);
+  const [selectedDate, setSelectedDate] = useState(() => tripStart || "");
 
   useEffect(() => {
     setSelectedDate(tripStart || "");
   }, [tripStart]);
 
+  useEffect(() => {
+    setExpenses(loadExpenses(roomId));
+  }, [roomId, location.key]);
+
   const inTripRange = useMemo(() => {
     if (!tripStart || !tripEnd) return expenses;
     const s = startOfDay(tripStart);
     const e = endOfDay(tripEnd);
-    return expenses.filter((x) => {
-      const d = new Date(x.date);
-      return d >= s && d <= e;
+    return expenses.filter((it) => {
+      const dt = new Date(it.date);
+      return dt >= s && dt <= e;
     });
   }, [expenses, tripStart, tripEnd]);
 
@@ -133,105 +127,161 @@ export default function RoomHomePage() {
     if (!selectedDate) return [];
     const s = startOfDay(selectedDate);
     const e = endOfDay(selectedDate);
-    return inTripRange.filter((x) => {
-      const d = new Date(x.date);
-      return d >= s && d <= e;
+    return inTripRange.filter((it) => {
+      const dt = new Date(it.date);
+      return dt >= s && dt <= e;
     });
   }, [inTripRange, selectedDate]);
 
-  const totalAmount = useMemo(
-    () => inTripRange.reduce((s, e) => s + calcExpenseTotal(e), 0),
-    [inTripRange],
-  );
+  const totalAmount = useMemo(() => {
+    return inTripRange.reduce((sum, e) => sum + calcExpenseTotal(e), 0);
+  }, [inTripRange]);
 
-  const card = (e) => (
-    <div
-      key={e.id}
-      style={{
-        border: "1px solid #eee",
-        borderRadius: 12,
-        padding: 12,
-        background: "white",
-        display: "flex",
-        justifyContent: "space-between",
-      }}
-    >
-      <div>
-        <div style={{ fontWeight: 800 }}>{e.title}</div>
-        <div style={{ fontSize: 12, color: "#777" }}>
-          날짜: {e.dateKey ?? toDateKey(e.date)} · 결제자: {e.payerName}
-        </div>
-      </div>
-      <div style={{ fontWeight: 900 }}>
-        {calcExpenseTotal(e).toLocaleString()}원
-      </div>
-    </div>
-  );
+  const goAdd = useCallback(() => {
+    navigate(`/rooms/${roomId}/add-expense`);
+  }, [navigate, roomId]);
+
+  const goSettlement = useCallback(() => {
+    navigate(`/rooms/${roomId}/settlement`);
+  }, [navigate, roomId]);
+
+  const ExpenseCard = ({ e }) => {
+    const total = calcExpenseTotal(e);
+    return (
+      <Card className="hover:shadow-sm transition">
+        <CardContent className="p-4 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="font-semibold truncate">{e.title}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              날짜: {e.dateKey ?? toDateKey(e.date)} · 결제자:{" "}
+              {e.payerName || "미정"} ·{" "}
+              {Array.isArray(e.items) && e.items.length > 0
+                ? "혼합정산(품목/공동)"
+                : "기본"}
+            </div>
+          </div>
+          <div className="font-bold whitespace-nowrap">
+            {Number(total).toLocaleString()}원
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
-    <div style={{ padding: 16 }}>
-      {/* 상단 요약 */}
-      <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
-        <div style={{ fontWeight: 900 }}>
-          여행 기간:{" "}
-          {tripStart && tripEnd ? `${tripStart} ~ ${tripEnd}` : "미정"}
-        </div>
-        <div style={{ marginTop: 8 }}>
-          기간 총 지출: <b>{totalAmount.toLocaleString()}원</b>
-        </div>
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">여행 요약</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-xs text-muted-foreground">여행 기간</div>
+              <div className="font-semibold">
+                {tripStart && tripEnd
+                  ? `${tripStart} ~ ${tripEnd}`
+                  : "여행 기간 정보 없음"}
+              </div>
 
-        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <button onClick={() => navigate(`/rooms/${roomId}/add-expense`)}>
-            + 지출 등록
-          </button>
-          <button onClick={() => navigate(`/rooms/${roomId}/settlement`)}>
-            정산
-          </button>
-        </div>
+              <div className="mt-3 text-xs text-muted-foreground">
+                기간 총 지출
+              </div>
+              <div className="text-2xl font-extrabold tracking-tight">
+                {totalAmount.toLocaleString()}원
+              </div>
+            </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-          <button onClick={() => setViewMode("LIST")}>전체 내역</button>
-          <button
-            onClick={() => setViewMode("DAY")}
-            disabled={!dateList.length}
-          >
-            날짜별 보기
-          </button>
-        </div>
-
-        {viewMode === "DAY" && (
-          <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-            {dateList.map((d) => (
-              <button
-                key={d}
-                onClick={() => setSelectedDate(d)}
-                style={{
-                  background: d === selectedDate ? "#111827" : "white",
-                  color: d === selectedDate ? "white" : "#111827",
-                }}
-              >
-                {d}
-              </button>
-            ))}
+            <div className="flex gap-2">
+              <Button onClick={goAdd}>+ 지출 등록</Button>
+              <Button variant="outline" onClick={goSettlement}>
+                정산
+              </Button>
+            </div>
           </div>
-        )}
-      </div>
 
-      <div style={{ marginTop: 12 }}>
-        {viewMode === "LIST" &&
-          (inTripRange.length === 0 ? (
-            <div style={{ color: "#777" }}>지출이 없습니다.</div>
-          ) : (
-            inTripRange.map(card)
-          ))}
+          <Separator />
 
-        {viewMode === "DAY" &&
-          (inSelectedDay.length === 0 ? (
-            <div style={{ color: "#777" }}>선택한 날짜에 지출이 없습니다.</div>
+          <div className="flex gap-2 flex-wrap">
+            <Button
+              variant={viewMode === "LIST" ? "default" : "outline"}
+              onClick={() => setViewMode("LIST")}
+            >
+              전체 내역
+            </Button>
+
+            <Button
+              variant={viewMode === "DAY" ? "default" : "outline"}
+              onClick={() => setViewMode("DAY")}
+              disabled={dateList.length === 0}
+            >
+              날짜별 보기
+            </Button>
+          </div>
+
+          {viewMode === "DAY" && (
+            <div className="flex gap-2 flex-wrap">
+              {dateList.map((d) => (
+                <Button
+                  key={d}
+                  variant={selectedDate === d ? "default" : "ghost"}
+                  onClick={() => setSelectedDate(d)}
+                >
+                  {d}
+                </Button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {!tripStart || !tripEnd ? (
+        <Card>
+          <CardContent className="p-4 text-sm text-destructive">
+            방에 여행 기간(tripStart/tripEnd)이 저장되어 있지 않습니다.
+            RoomsPage 저장 로직을 확인해주세요.
+          </CardContent>
+        </Card>
+      ) : inTripRange.length === 0 ? (
+        <Card>
+          <CardContent className="p-4 text-sm text-muted-foreground">
+            여행 기간 내 지출이 없습니다. <b>+ 지출 등록</b>으로 추가해보세요.
+          </CardContent>
+        </Card>
+      ) : viewMode === "LIST" ? (
+        <div className="grid gap-3">
+          {inTripRange
+            .slice()
+            .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+            .map((e) => (
+              <ExpenseCard key={e.id} e={e} />
+            ))}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="font-semibold">{selectedDate || "(날짜 선택)"}</div>
+          {inSelectedDay.length === 0 ? (
+            <Card>
+              <CardContent className="p-4 text-sm text-muted-foreground">
+                선택한 날짜에 지출이 없습니다.
+              </CardContent>
+            </Card>
           ) : (
-            inSelectedDay.map(card)
-          ))}
-      </div>
+            <div className="grid gap-3">
+              {inSelectedDay
+                .slice()
+                .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+                .map((e) => (
+                  <ExpenseCard key={e.id} e={e} />
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        (더미) 홈은 방 생성 시 저장한 여행 기간을 자동 적용합니다.
+      </p>
     </div>
   );
 }
