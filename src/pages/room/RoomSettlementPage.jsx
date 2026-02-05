@@ -1,24 +1,29 @@
+// src/pages/room/RoomSettlementPage.jsx
 import { useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SETTLEMENT_STATUS } from "@/constants/settlement";
+import TransferRow from "@/components/TransferRow";
+
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Card } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 
 const EXPENSES_KEY_V2 = (roomId) => `expenses_v2_${roomId}`;
 const EXPENSES_KEY_V1 = (roomId) => `expenses_v1_${roomId}`;
 const ME_KEY = "user_name_v1";
 
-// ✅ 설정과 동일 키 사용
-const KAKAO_TRANSFER_VALUE_KEY = "kakao_transfer_value_v1";
+// ✅ room별 상태 저장
+const STATUS_KEY = (roomId) => `settlement_status_v1_${roomId}`;
 
+// 혼합정산 item mode
 const ITEM_MODE = {
   PER_PERSON: "PER_PERSON",
   SHARED_SPLIT: "SHARED_SPLIT",
@@ -45,6 +50,21 @@ function loadExpenses(roomId) {
   return [...a2, ...a1];
 }
 
+function loadStatusMap(roomId) {
+  try {
+    const raw = localStorage.getItem(STATUS_KEY(roomId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveStatusMap(roomId, map) {
+  localStorage.setItem(STATUS_KEY(roomId), JSON.stringify(map));
+}
+
 function addTransfer(map, from, to, amount) {
   if (!from || !to) return;
   if (from === to) return;
@@ -59,6 +79,7 @@ function computeTransfers(expenses) {
     const payer = e.payerName || e.payer || "미정";
     const items = Array.isArray(e.items) ? e.items : [];
 
+    // ✅ v2(혼합정산): items 기반 계산
     if (items.length > 0) {
       for (const it of items) {
         const users = Array.isArray(it.users) ? it.users : [];
@@ -81,6 +102,7 @@ function computeTransfers(expenses) {
       continue;
     }
 
+    // ✅ fallback(v1): amount + participants로 n빵
     const total = Number(e.amount) || 0;
     const participants =
       Array.isArray(e.participants) && e.participants.length > 0
@@ -96,35 +118,49 @@ function computeTransfers(expenses) {
   return Array.from(transfers.entries())
     .map(([key, amount]) => {
       const [from, to] = key.split("->");
-      return { from, to, amount: Math.round(amount) };
+      return { id: key, from, to, amount: Math.round(amount) };
     })
     .sort((a, b) => b.amount - a.amount);
 }
 
-function loadTransferValue() {
-  return localStorage.getItem(KAKAO_TRANSFER_VALUE_KEY) || "";
-}
-
-function saveTransferValue(v) {
-  localStorage.setItem(KAKAO_TRANSFER_VALUE_KEY, v);
-}
-
 export default function RoomSettlementPage() {
   const { roomId } = useParams();
-  const navigate = useNavigate();
-
   const me = loadMe();
-  const expenses = useMemo(() => loadExpenses(roomId), [roomId]);
-  const transfers = useMemo(() => computeTransfers(expenses), [expenses]);
 
+  const expenses = useMemo(() => loadExpenses(roomId), [roomId]);
+  const baseTransfers = useMemo(() => computeTransfers(expenses), [expenses]);
+
+  // ✅ 상태 맵
+  const [statusMap, setStatusMap] = useState(() => loadStatusMap(roomId));
+  const persistStatusMap = (next) => {
+    setStatusMap(next);
+    saveStatusMap(roomId, next);
+  };
+
+  // ✅ status 주입
+  const transfers = useMemo(() => {
+    return baseTransfers.map((t) => ({
+      ...t,
+      status: statusMap[t.id] || SETTLEMENT_STATUS.READY,
+    }));
+  }, [baseTransfers, statusMap]);
+
+  // 내가 관련된 것만 보기 / 전체 보기
+  const [showAll, setShowAll] = useState(false);
   const myTransfers = useMemo(
     () => transfers.filter((t) => t.from === me || t.to === me),
     [transfers, me],
   );
-
-  const [showAll, setShowAll] = useState(false);
   const shown = showAll ? transfers : myTransfers;
 
+  // ✅ "요청 가능한 것" = 내가 받을 돈(to === me) 이고 READY인 것
+  const requestables = useMemo(() => {
+    return transfers.filter(
+      (t) => t.to === me && t.status === SETTLEMENT_STATUS.READY,
+    );
+  }, [transfers, me]);
+
+  // 내 기준 요약
   const summary = useMemo(() => {
     let send = 0;
     let recv = 0;
@@ -135,226 +171,162 @@ export default function RoomSettlementPage() {
     return { send, recv };
   }, [myTransfers, me]);
 
-  // ✅ 요청 보내기 UI
-  const [notice, setNotice] = useState("");
-  const toast = (msg) => {
-    setNotice(msg);
-    window.setTimeout(() => setNotice(""), 1800);
+  // ✅ 전체 요청 팝업
+  const [openBulk, setOpenBulk] = useState(false);
+
+  // actions
+  const markRequested = (ids) => {
+    const next = { ...statusMap };
+    for (const id of ids) next[id] = SETTLEMENT_STATUS.REQUESTED;
+    persistStatusMap(next);
   };
 
-  const [openTransferDialog, setOpenTransferDialog] = useState(false);
-  const [transferValueDraft, setTransferValueDraft] = useState(() =>
-    loadTransferValue(),
-  );
-
-  const ensureTransferValue = () => {
-    const v = loadTransferValue();
-    if (v) return true;
-    setTransferValueDraft("");
-    setOpenTransferDialog(true);
-    return false;
+  const markDone = (id) => {
+    const next = { ...statusMap, [id]: SETTLEMENT_STATUS.DONE };
+    persistStatusMap(next);
   };
 
-  const buildRequestMessage = (from, amount) => {
-    const v = loadTransferValue();
-    // MVP: 링크/코드 문자열을 그대로 안내 메시지에 포함
-    return `정산 요청입니다!\n\n보낼 사람: ${from}\n받는 사람: ${me}\n금액: ${Number(amount).toLocaleString()}원\n\n송금 링크/코드:\n${v}\n\n(앱: Trip Split)`;
+  const onRequestOne = (id) => {
+    markRequested([id]);
+    // 지금은 더미 처리(나중에 API 붙이면 여기서 호출)
+    // alert("정산 요청을 보냈어요! (더미)");
   };
 
-  const copyRequestFor = async (from, amount) => {
-    if (!ensureTransferValue()) return;
-
-    const msg = buildRequestMessage(from, amount);
-    try {
-      await navigator.clipboard.writeText(msg);
-      toast("요청 메시지 복사됨");
-    } catch {
-      window.prompt("아래 메시지를 복사해서 카톡으로 보내세요:", msg);
-    }
+  const onResendOne = (id) => {
+    // 상태는 REQUESTED 유지
+    const next = { ...statusMap, [id]: SETTLEMENT_STATUS.REQUESTED };
+    persistStatusMap(next);
+    // alert("정산 요청을 재전송했어요! (더미)");
   };
 
-  const saveTransferFromDialog = () => {
-    const next = transferValueDraft.trim();
+  const onDoneOne = (id) => {
+    markDone(id);
+  };
 
-    if (!next) {
-      toast("송금 링크/코드를 입력해 주세요");
-      return;
-    }
-    if (next.length < 6) {
-      toast("값이 너무 짧아요. 다시 확인해 주세요.");
-      return;
-    }
-    if (/\s/.test(next)) {
-      toast("공백이 포함되어 있어요. 공백을 제거해 주세요.");
-      return;
-    }
+  const onBulkOpen = () => setOpenBulk(true);
 
-    saveTransferValue(next);
-    setOpenTransferDialog(false);
-    toast("송금 링크/코드 저장됨");
+  const onBulkConfirm = () => {
+    if (requestables.length === 0) return;
+    markRequested(requestables.map((t) => t.id));
+    setOpenBulk(false);
+    // alert("정산 요청을 한 번에 보냈어요! (더미)");
   };
 
   return (
-    <div className="space-y-4">
-      {notice && (
-        <div className="rounded-xl border bg-muted/40 px-4 py-3 text-sm">
-          {notice}
+    <div className="p-4 space-y-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-xl font-bold m-0">정산</h2>
+
+        {/* ✅ 한 번에 요청 보내기 버튼 */}
+        <Button onClick={onBulkOpen} disabled={requestables.length === 0}>
+          한 번에(전부) 요청 보내기
+        </Button>
+      </div>
+
+      <Card className="p-4 space-y-2">
+        <div className="text-sm text-muted-foreground">
+          기준 사용자: <b className="text-foreground">{me}</b>
+        </div>
+
+        <div className="flex gap-4 flex-wrap text-sm">
+          <div>
+            보낼 금액: <b>{summary.send.toLocaleString()}원</b>
+          </div>
+          <div>
+            받을 금액: <b>{summary.recv.toLocaleString()}원</b>
+          </div>
+        </div>
+
+        <Separator className="my-2" />
+
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={showAll}
+            onChange={(e) => setShowAll(e.target.checked)}
+          />
+          전체 송금표도 보기
+        </label>
+
+        <div className="text-xs text-muted-foreground">
+          * “완료”는 자동 처리되지 않습니다. 실제 송금 확인 후 “완료”를
+          눌러주세요.
+        </div>
+      </Card>
+
+      {/* 리스트 */}
+      {shown.length === 0 ? (
+        <div className="text-sm text-muted-foreground">
+          정산할 내역이 없습니다. (지출/참여자 데이터를 확인해주세요)
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {shown.map((t) => {
+            // ✅ 내가 받을 돈일 때만 요청/재전송/완료 버튼 노출
+            const canRequest = t.to === me;
+
+            return (
+              <TransferRow
+                key={t.id}
+                item={t}
+                canRequest={canRequest}
+                onRequest={onRequestOne}
+                onResend={onResendOne}
+                onDone={onDoneOne}
+              />
+            );
+          })}
         </div>
       )}
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">정산</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="text-sm text-muted-foreground">
-            기준 사용자: <b className="text-foreground">{me}</b>
-          </div>
-
-          <div className="rounded-xl border p-3">
-            <div className="text-xs text-muted-foreground">내 기준 요약</div>
-            <div className="mt-2 flex flex-wrap gap-4 text-sm">
-              <div>
-                보낼 금액: <b>{summary.send.toLocaleString()}원</b>
-              </div>
-              <div>
-                받을 금액: <b>{summary.recv.toLocaleString()}원</b>
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={showAll}
-                  onChange={(e) => setShowAll(e.target.checked)}
-                />
-                전체 송금표도 보기
-              </label>
-
-              <Button
-                variant="outline"
-                onClick={() => {
-                  // 설정으로 바로 이동할 수도 있게
-                  navigate(`/rooms/${roomId}/settings`);
-                }}
-              >
-                내 송금 링크/코드 설정
-              </Button>
-            </div>
-
-            <div className="mt-3 text-xs text-muted-foreground">
-              저장된 송금 값:{" "}
-              <span className="font-mono break-all">
-                {loadTransferValue() || "(없음) - 요청 보내기 시 입력 필요"}
-              </span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">송금표</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {shown.length === 0 ? (
-            <div className="text-sm text-muted-foreground">
-              정산할 내역이 없습니다. (지출/품목/참여자 데이터를 확인해주세요)
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {shown.map((t, idx) => {
-                const hint =
-                  t.from === me
-                    ? "내가 보내야 함"
-                    : t.to === me
-                      ? "내가 받아야 함"
-                      : "전체 송금표";
-
-                const canRequest = t.to === me && t.amount > 0; // ✅ 내가 받을 건만 요청 생성
-
-                return (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between gap-3 rounded-xl border bg-background p-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold">
-                        <b>{t.from}</b> → <b>{t.to}</b>
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {hint}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <div className="text-sm font-bold">
-                        {t.amount.toLocaleString()}원
-                      </div>
-
-                      {canRequest && (
-                        <Button
-                          size="sm"
-                          onClick={() => copyRequestFor(t.from, t.amount)}
-                        >
-                          요청 메시지 복사
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ✅ 모달: 송금 링크/코드 입력 */}
-      <Dialog open={openTransferDialog} onOpenChange={setOpenTransferDialog}>
+      {/* ✅ 전체 요청 팝업 */}
+      <Dialog open={openBulk} onOpenChange={setOpenBulk}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>송금 링크/코드 등록</DialogTitle>
+            <DialogTitle>정산 요청을 한 번에 보낼까요?</DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              정산 요청 메시지에 포함할 송금 링크/코드를 붙여넣어 주세요. (한 번
-              저장하면 다음부터는 자동 사용됩니다.)
-            </p>
-
-            <div className="grid gap-2">
-              <Label>송금 링크 또는 코드</Label>
-              <Input
-                value={transferValueDraft}
-                onChange={(e) => setTransferValueDraft(e.target.value)}
-                placeholder="카카오톡에서 복사한 값을 붙여넣기"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setOpenTransferDialog(false)}
-              >
-                취소
-              </Button>
-              <Button onClick={saveTransferFromDialog}>저장</Button>
-            </div>
-
-            <details className="rounded-lg border p-3 text-sm">
-              <summary className="cursor-pointer font-medium">
-                왜 이게 필요하죠?
-              </summary>
-              <div className="mt-2 text-sm text-muted-foreground space-y-2">
-                <p>
-                  카카오 송금은 받는 사람 식별 정보가 포함된 링크/코드가
-                  필요합니다. 지금은 카카오 API 미연동 상태라 앱이 자동으로 알
-                  수 없어, 한 번만 입력받아 저장합니다.
-                </p>
-              </div>
-            </details>
+          <div className="text-sm text-muted-foreground">
+            아래 사람들에게 정산 요청을 보냅니다.
           </div>
+
+          <div className="mt-3 space-y-2">
+            <div className="text-sm font-semibold">요청 받는 사람</div>
+
+            {requestables.length === 0 ? (
+              <div className="text-sm text-muted-foreground">
+                요청할 항목이 없습니다.
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                {requestables.map((t) => (
+                  <Card
+                    key={t.id}
+                    className="p-3 flex items-center justify-between"
+                  >
+                    <div className="text-sm">
+                      <b>{t.from}</b> (나에게 보내야 함)
+                    </div>
+                    <div className="text-sm font-semibold">
+                      {t.amount.toLocaleString()}원
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="mt-4 gap-2">
+            <Button variant="outline" onClick={() => setOpenBulk(false)}>
+              취소
+            </Button>
+            <Button
+              onClick={onBulkConfirm}
+              disabled={requestables.length === 0}
+            >
+              요청 보내기
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
