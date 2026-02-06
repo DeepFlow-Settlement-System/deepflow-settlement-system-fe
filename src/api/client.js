@@ -1,49 +1,52 @@
 // src/api/client.js
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "https://t2.mobidic.shop";
 
 /**
- * 프로젝트에서 토큰을 어디에 저장하는지 아직 확실하지 않아서
- * 가능한 케이스를 넓게 잡아둠.
- * - accessToken
- * - token
+ * apiFetch(path, options)
+ * - response가 { status, message, data } 형태면 그대로 반환
+ * - accessToken 있으면 Authorization 자동 첨부
+ * - GET 요청에 Content-Type 억지로 안 붙임(불필요 preflight 방지)
  */
-function getToken() {
-  return (
-    localStorage.getItem("accessToken") || localStorage.getItem("token") || ""
-  );
-}
+export async function apiFetch(path, options = {}) {
+  const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
 
-export function authHeaders(extra = {}) {
-  const token = getToken();
-  return {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...extra,
+  const headers = {
+    ...(options.headers || {}),
   };
-}
 
-export async function apiFetch(path, { method = "GET", headers, body } = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
+  // body가 있을 때만 Content-Type 설정 (GET에 붙이면 preflight 생길 수 있음)
+  const hasBody = options.body != null;
+  if (hasBody && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  // 토큰 자동 첨부
+  const token = localStorage.getItem("accessToken");
+  if (token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url, {
+    ...options,
     headers,
-    body,
+    credentials: "include",
   });
 
-  // 백엔드가 ApiResponse 형태면 json.data에 있을 가능성이 높음
   const text = await res.text();
-  let json = null;
+  let json;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
-    json = null;
+    json = { raw: text };
   }
 
   if (!res.ok) {
     const msg =
       json?.message ||
       json?.error ||
-      (typeof text === "string" && text) ||
-      `HTTP ${res.status}`;
+      `HTTP ${res.status} ${res.statusText}` ||
+      "Request failed";
     throw new Error(msg);
   }
 

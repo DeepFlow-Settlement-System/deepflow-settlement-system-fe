@@ -1,3 +1,4 @@
+// src/pages/room/RoomSettingsPage.jsx
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -11,6 +12,9 @@ const ME_KEY = "user_name_v1";
 
 // ✅ "UID"에 한정하지 않고, 링크/코드 문자열 자체를 저장
 const KAKAO_TRANSFER_VALUE_KEY = "kakao_transfer_value_v1";
+
+// ✅ rooms 저장 키 (그룹 이미지 저장)
+const ROOMS_KEY = "rooms_v2";
 
 function loadMembers(roomId) {
   try {
@@ -43,6 +47,60 @@ function saveTransferValue(v) {
   localStorage.setItem(KAKAO_TRANSFER_VALUE_KEY, v);
 }
 
+function loadRooms() {
+  try {
+    const raw = localStorage.getItem(ROOMS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRooms(rooms) {
+  localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * ✅ 정사각형 센터 크롭 + 리사이즈 + JPEG 압축
+ */
+async function cropSquareToJpegDataURL(file, size = 480, quality = 0.82) {
+  const dataUrl = await readFileAsDataURL(file);
+
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = dataUrl;
+  });
+
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+
+  const side = Math.min(w, h);
+  const sx = Math.floor((w - side) / 2);
+  const sy = Math.floor((h - side) / 2);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
 export default function RoomSettingsPage() {
   const navigate = useNavigate();
   const { roomId } = useParams();
@@ -61,6 +119,13 @@ export default function RoomSettingsPage() {
 
   const [transferValue, setTransferValue] = useState(() => loadTransferValue());
   const [notice, setNotice] = useState("");
+
+  // ✅ 현재 room 이미지
+  const [roomImageUrl, setRoomImageUrl] = useState(() => {
+    const rooms = loadRooms();
+    const room = rooms.find((r) => String(r.id) === String(roomId)) || null;
+    return room?.imageUrl || "";
+  });
 
   const toast = (msg) => {
     setNotice(msg);
@@ -101,6 +166,8 @@ export default function RoomSettingsPage() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("token");
     localStorage.removeItem("isLoggedIn");
     navigate("/login", { replace: true });
   };
@@ -146,6 +213,44 @@ export default function RoomSettingsPage() {
     }
   };
 
+  // ✅ rooms_v2에 그룹 이미지 저장
+  const persistRoomImage = (nextUrl) => {
+    const rooms = loadRooms();
+    const nextRooms = rooms.map((r) =>
+      String(r.id) === String(roomId) ? { ...r, imageUrl: nextUrl } : r,
+    );
+    saveRooms(nextRooms);
+    setRoomImageUrl(nextUrl);
+  };
+
+  const handlePickRoomImage = async (file) => {
+    if (!file) return;
+
+    // ✅ 3MB 제한
+    const maxBytes = 3 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      toast("이미지 파일은 최대 3MB까지 업로드할 수 있어요.");
+      return;
+    }
+    if (!file.type?.startsWith("image/")) {
+      toast("이미지 파일만 업로드할 수 있어요.");
+      return;
+    }
+
+    try {
+      const squareJpeg = await cropSquareToJpegDataURL(file, 480, 0.82);
+      persistRoomImage(squareJpeg);
+      toast("그룹 이미지 저장됨");
+    } catch {
+      toast("이미지 처리에 실패했어요. 다른 이미지를 선택해 주세요.");
+    }
+  };
+
+  const handleRemoveRoomImage = () => {
+    persistRoomImage("");
+    toast("그룹 이미지 삭제됨");
+  };
+
   return (
     <div className="space-y-4">
       {notice && (
@@ -153,6 +258,60 @@ export default function RoomSettingsPage() {
           {notice}
         </div>
       )}
+
+      {/* ✅ 그룹 이미지 설정 */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">그룹 이미지</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="h-16 w-16 rounded-2xl border bg-muted overflow-hidden">
+              {roomImageUrl ? (
+                <img
+                  src={roomImageUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="h-full w-full flex items-center justify-center text-[10px] text-muted-foreground">
+                  No Img
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-2">
+              <div className="text-xs text-muted-foreground">
+                * 정사각형으로 자동 크롭됩니다
+                <br />* 3MB 이하만 가능
+              </div>
+
+              <div className="flex gap-2 flex-wrap">
+                <Button asChild variant="outline">
+                  <label className="cursor-pointer">
+                    이미지 변경
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handlePickRoomImage(e.target.files?.[0])}
+                    />
+                  </label>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={handleRemoveRoomImage}
+                  disabled={!roomImageUrl}
+                >
+                  이미지 삭제
+                </Button>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-3">

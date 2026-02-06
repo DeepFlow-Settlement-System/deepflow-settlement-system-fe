@@ -1,84 +1,79 @@
-import { useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-
-const USERS_KEY = "users_v1";
-const ME_KEY = "user_name_v1";
-
-function upsertUser(name) {
-  try {
-    const raw = localStorage.getItem(USERS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    const arr = Array.isArray(parsed) ? parsed : [];
-    if (!arr.includes(name)) {
-      const next = [...arr, name];
-      localStorage.setItem(USERS_KEY, JSON.stringify(next));
-    }
-  } catch {
-    localStorage.setItem(USERS_KEY, JSON.stringify([name]));
-  }
-}
+// src/pages/LoginPage.jsx
+import React, { useState } from "react";
+import { apiFetch } from "@/api/client";
 
 export default function LoginPage() {
-  const navigate = useNavigate();
+  const [err, setErr] = useState("");
 
-  const handleLogin = () => {
-    localStorage.setItem("isLoggedIn", "true");
-    const me = localStorage.getItem(ME_KEY) || "현서";
-    localStorage.setItem(ME_KEY, me);
-    upsertUser(me);
-    navigate("/rooms", { replace: true });
+  const onKakaoLogin = async () => {
+    try {
+      setErr("");
+
+      // ✅ 스웨거: GET /api/auth/login-url/kakao
+      const res = await apiFetch("/api/auth/login-url/kakao");
+
+      // ✅ 스웨거 응답: { status, message, data: { url } }
+      const url = res?.data?.url;
+      if (!url)
+        throw new Error("로그인 URL을 받지 못했습니다. (data.url 없음)");
+
+      window.location.href = url;
+    } catch (e) {
+      setErr(e?.message || "Failed to fetch");
+    }
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-2">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-foreground text-background flex items-center justify-center font-black">
-              TS
-            </div>
-            <div>
-              <CardTitle className="text-xl">Trip Split</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                여행 지출 기록 & 정산 요청
-              </p>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-lg border border-gray-100 p-6">
+        <div className="flex items-start gap-3">
+          <div className="w-12 h-12 rounded-xl bg-black text-white flex items-center justify-center font-bold">
+            TS
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold leading-tight">Trip Split</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              여행 지출 기록 & 정산 요청
+            </p>
+          </div>
+        </div>
+
+        <p className="text-sm text-gray-600 mt-4 leading-relaxed">
+          여행 중 지출을 바로 기록하고, 원하는 시점에 정산 요청을 보낼 수
+          있어요.
+        </p>
+
+        <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
+          <div>
+            ✅ 로그인은 <b>카카오 계정</b>으로만 진행돼요.
+          </div>
+          <div className="mt-1">
+            ✅ 자동 송금은 제공하지 않아요. (요청 링크 전송 방식)
+          </div>
+        </div>
+
+        {err ? (
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <b className="block mb-1">오류</b>
+            {err}
+            <div className="text-xs text-red-600 mt-1">
+              (대부분 API_BASE_URL 설정/서버 문제거나, Redirect URI가
+              백엔드/카카오 설정과 다를 때 발생)
             </div>
           </div>
-        </CardHeader>
+        ) : null}
 
-        <CardContent className="space-y-4">
-          <div className="text-sm text-muted-foreground leading-relaxed">
-            여행 중 지출을 바로 기록하고, 원하는 시점에 정산 요청을 보낼 수
-            있어요.
-          </div>
+        <button
+          onClick={onKakaoLogin}
+          className="mt-5 w-full rounded-xl bg-yellow-400 hover:bg-yellow-300 active:bg-yellow-500 text-black font-semibold py-3 transition"
+        >
+          카카오로 시작하기
+        </button>
 
-          <div className="rounded-xl border bg-muted/40 p-3 text-sm">
-            <div>
-              ✔ 로그인은 <b>카카오 계정</b>으로만 진행돼요.
-            </div>
-            <div>✔ 자동 송금은 제공하지 않아요. (요청 링크 전송 방식)</div>
-          </div>
-
-          <Separator />
-
-          <Button
-            type="button"
-            onClick={handleLogin}
-            className="w-full bg-[#FEE500] text-black hover:bg-[#FEE500]/90"
-          >
-            카카오로 시작하기 (더미)
-          </Button>
-
-          <p className="text-xs text-muted-foreground">
-            로그인 버튼은 현재 더미입니다. (API 연결 시 실제 카카오 로그인으로
-            교체)
-            <br />
-            (B-1) 로그인 시 앱 유저 목록(users_v1)에 자동 등록됩니다.
-          </p>
-        </CardContent>
-      </Card>
+        <div className="mt-4 text-xs text-gray-500 leading-relaxed">
+          로그인 성공 후 콜백 페이지에서 토큰 발급을 마치면 Rooms로 이동합니다.
+        </div>
+      </div>
     </div>
   );
 }
