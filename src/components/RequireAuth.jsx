@@ -1,5 +1,4 @@
 // src/components/RequireAuth.jsx
-import React from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 export default function RequireAuth() {
