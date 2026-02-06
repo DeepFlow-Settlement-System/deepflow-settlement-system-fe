@@ -1,49 +1,50 @@
 // src/api/client.js
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "https://t2.mobidic.shop";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+export async function apiFetch(path, options = {}) {
+  const url = path.startsWith("http") ? path : `${API_BASE_URL}${path}`;
 
-/**
- * 프로젝트에서 토큰을 어디에 저장하는지 아직 확실하지 않아서
- * 가능한 케이스를 넓게 잡아둠.
- * - accessToken
- * - token
- */
-function getToken() {
-  return (
-    localStorage.getItem("accessToken") || localStorage.getItem("token") || ""
-  );
-}
+  const headers = { ...(options.headers || {}) };
 
-export function authHeaders(extra = {}) {
-  const token = getToken();
-  return {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...extra,
-  };
-}
+  const hasBody = options.body != null;
+  if (hasBody && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
 
-export async function apiFetch(path, { method = "GET", headers, body } = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method,
+  const token = localStorage.getItem("accessToken");
+  if (token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url, {
+    ...options,
     headers,
-    body,
+    credentials: options.credentials ?? "omit",
   });
 
-  // 백엔드가 ApiResponse 형태면 json.data에 있을 가능성이 높음
   const text = await res.text();
-  let json = null;
+  let json;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
-    json = null;
+    json = { raw: text };
   }
 
   if (!res.ok) {
+    console.error("API ERROR", {
+      url,
+      status: res.status,
+      statusText: res.statusText,
+      body: json,
+    });
+
     const msg =
       json?.message ||
       json?.error ||
-      (typeof text === "string" && text) ||
-      `HTTP ${res.status}`;
+      json?.raw ||
+      `HTTP ${res.status} ${res.statusText}` ||
+      "Request failed";
     throw new Error(msg);
   }
 

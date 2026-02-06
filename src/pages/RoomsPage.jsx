@@ -1,3 +1,4 @@
+// src/pages/RoomsPage.jsx
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -39,6 +40,48 @@ function toDateKey(date) {
   return `${y}-${m}-${dd}`;
 }
 
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * ✅ 정사각형 센터 크롭 + 리사이즈 + JPEG 압축
+ * - size: 최종 정사각형 한 변 px
+ * - quality: 0~1 (jpeg)
+ */
+async function cropSquareToJpegDataURL(file, size = 480, quality = 0.82) {
+  const dataUrl = await readFileAsDataURL(file);
+
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = dataUrl;
+  });
+
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+
+  // center-crop square
+  const side = Math.min(w, h);
+  const sx = Math.floor((w - side) / 2);
+  const sy = Math.floor((h - side) / 2);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
 export default function RoomsPage() {
   const navigate = useNavigate();
 
@@ -49,6 +92,9 @@ export default function RoomsPage() {
   const today = toDateKey(new Date());
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
+
+  // ✅ 그룹 이미지 (정사각형 dataURL)
+  const [roomImageUrl, setRoomImageUrl] = useState("");
 
   const canCreate = useMemo(() => {
     return (
@@ -63,6 +109,7 @@ export default function RoomsPage() {
     setRoomName("");
     setStartDate(today);
     setEndDate(today);
+    setRoomImageUrl("");
   };
 
   const openModal = () => {
@@ -82,6 +129,7 @@ export default function RoomsPage() {
       name: roomName.trim(),
       tripStart: startDate,
       tripEnd: endDate,
+      imageUrl: roomImageUrl || "", // ✅ 추가
       createdAt: new Date().toISOString(),
     };
 
@@ -90,7 +138,32 @@ export default function RoomsPage() {
     saveRooms(nextRooms);
 
     setOpen(false);
+    resetForm();
     navigate(`/rooms/${newRoom.id}/invite`);
+  };
+
+  const handlePickImage = async (file) => {
+    if (!file) return;
+
+    // ✅ 3MB 제한
+    const maxBytes = 3 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      alert("이미지 파일은 최대 3MB까지 업로드할 수 있어요.");
+      return;
+    }
+
+    // 이미지 파일인지 최소 체크
+    if (!file.type?.startsWith("image/")) {
+      alert("이미지 파일만 업로드할 수 있어요.");
+      return;
+    }
+
+    try {
+      const squareJpeg = await cropSquareToJpegDataURL(file, 480, 0.82);
+      setRoomImageUrl(squareJpeg);
+    } catch {
+      alert("이미지 처리에 실패했어요. 다른 이미지를 선택해 주세요.");
+    }
   };
 
   return (
@@ -125,6 +198,43 @@ export default function RoomsPage() {
                     placeholder="예) 제주도 여행"
                     autoFocus
                   />
+                </div>
+
+                {/* ✅ 그룹 이미지 */}
+                <div className="grid gap-2">
+                  <Label>그룹 이미지 (정사각형)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handlePickImage(e.target.files?.[0])}
+                  />
+
+                  {roomImageUrl ? (
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={roomImageUrl}
+                        alt="room preview"
+                        className="h-20 w-20 rounded-xl border object-cover"
+                      />
+                      <div className="grid gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          * 자동으로 정사각형으로 잘라 저장돼요.
+                          <br />* 3MB 이하만 가능
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => setRoomImageUrl("")}
+                        >
+                          이미지 제거
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      * 선택하면 자동으로 정사각형으로 저장돼요 (최대 3MB).
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid gap-2">
@@ -162,7 +272,13 @@ export default function RoomsPage() {
               </div>
 
               <DialogFooter className="gap-2 sm:gap-0">
-                <Button variant="outline" onClick={() => setOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOpen(false);
+                    resetForm();
+                  }}
+                >
                   취소
                 </Button>
                 <Button onClick={handleCreateRoom} disabled={!canCreate}>
@@ -191,8 +307,24 @@ export default function RoomsPage() {
                 onClick={() => goRoom(r.id)}
               >
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-base">{r.name}</CardTitle>
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-xl border bg-muted overflow-hidden">
+                      {r.imageUrl ? (
+                        <img
+                          src={r.imageUrl}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="h-full w-full flex items-center justify-center text-[10px] text-muted-foreground">
+                          No Img
+                        </div>
+                      )}
+                    </div>
+                    <CardTitle className="text-base">{r.name}</CardTitle>
+                  </div>
                 </CardHeader>
+
                 <CardContent className="pt-0">
                   <div className="text-sm text-muted-foreground">
                     일정: {r.tripStart ?? "?"} ~ {r.tripEnd ?? "?"}
