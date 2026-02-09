@@ -5,32 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getGroupDetail, getInviteCode, leaveGroup } from "@/api/groups";
+import { getGroupDetail, getInviteCode, leaveGroup, getGroupImage, uploadGroupImage, deleteGroupImage } from "@/api/groups";
 import { getMe } from "@/api/users";
-
-const GROUP_IMAGES_KEY = "group_images_v1";
-
-function loadGroupImage(groupId) {
-  try {
-    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed[groupId] || null;
-  } catch {
-    return null;
-  }
-}
-
-function saveGroupImage(groupId, imageUrl) {
-  try {
-    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    parsed[groupId] = imageUrl;
-    localStorage.setItem(GROUP_IMAGES_KEY, JSON.stringify(parsed));
-  } catch {
-    // ignore
-  }
-}
 
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -98,6 +74,14 @@ export default function RoomSettingsPage() {
         setGroup(groupData);
         setInviteCodeData(inviteData);
         setCurrentUser(userData);
+        
+        // 그룹 이미지 조회
+        try {
+          const imgUrl = await getGroupImage(Number(roomId));
+          setRoomImageUrl(imgUrl || groupData.imageUrl || "");
+        } catch (e) {
+          setRoomImageUrl(groupData.imageUrl || "");
+        }
       } catch (e) {
         console.error("데이터 조회 실패:", e);
         setError(e?.message || "데이터를 불러오는데 실패했습니다.");
@@ -132,29 +116,27 @@ export default function RoomSettingsPage() {
     }
   };
 
-  const [roomImageUrl, setRoomImageUrl] = useState(() =>
-    loadGroupImage(roomId) || "",
-  );
-  useEffect(() => {
-    setRoomImageUrl(loadGroupImage(roomId) || "");
-  }, [roomId]);
+  const [roomImageUrl, setRoomImageUrl] = useState("");
 
-  const persistRoomImage = (nextUrl) => {
-    if (nextUrl) {
-      saveGroupImage(roomId, nextUrl);
-    } else {
-      // 이미지 삭제
-      try {
-        const raw = localStorage.getItem(GROUP_IMAGES_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        delete parsed[roomId];
-        localStorage.setItem(GROUP_IMAGES_KEY, JSON.stringify(parsed));
-      } catch {
-        // ignore
+  const persistRoomImage = async (nextUrl) => {
+    try {
+      if (nextUrl) {
+        // base64 data URL을 Blob으로 변환하여 업로드
+        const response = await fetch(nextUrl);
+        const blob = await response.blob();
+        await uploadGroupImage(Number(roomId), blob);
+        setRoomImageUrl(nextUrl);
+        toast("그룹 이미지 저장됨");
+      } else {
+        // 이미지 삭제
+        await deleteGroupImage(Number(roomId));
+        setRoomImageUrl("");
+        toast("그룹 이미지 삭제됨");
       }
+    } catch (e) {
+      console.error("이미지 저장/삭제 실패:", e);
+      toast(e?.message || "이미지 저장/삭제에 실패했습니다.");
     }
-    setRoomImageUrl(nextUrl);
-    toast(nextUrl ? "그룹 이미지 저장됨" : "그룹 이미지 삭제됨");
   };
 
   const handlePickRoomImage = async (file) => {
@@ -166,8 +148,9 @@ export default function RoomSettingsPage() {
 
     try {
       const squareJpeg = await cropSquareToJpegDataURL(file, 480, 0.82);
-      persistRoomImage(squareJpeg);
-    } catch {
+      await persistRoomImage(squareJpeg);
+    } catch (e) {
+      console.error("이미지 처리 실패:", e);
       toast("이미지 처리 실패. 다른 파일을 선택해 주세요.");
     }
   };

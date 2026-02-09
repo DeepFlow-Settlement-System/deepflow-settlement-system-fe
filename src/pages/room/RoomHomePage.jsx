@@ -8,19 +8,6 @@ import { Separator } from "@/components/ui/separator";
 import { getGroupDetail } from "@/api/groups";
 import { getExpenses } from "@/api/expenses";
 
-const GROUP_SCHEDULES_KEY = "group_schedules_v1";
-
-function loadGroupSchedule(groupId) {
-  try {
-    const raw = localStorage.getItem(GROUP_SCHEDULES_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed[groupId] || null;
-  } catch {
-    return null;
-  }
-}
-
 function toDateKey(input) {
   const d = new Date(input);
   const y = d.getFullYear();
@@ -101,14 +88,13 @@ export default function RoomHomePage() {
         setGroup(groupData);
         setExpenses(expensesData?.expenses || []);
 
-        // 로컬에서 일정 불러오기 (백엔드 미구현)
-        const schedule = loadGroupSchedule(Number(roomId));
-        if (schedule) {
-          setTripStart(schedule.tripStart || null);
-          setTripEnd(schedule.tripEnd || null);
-          if (schedule.tripStart) {
-            setSelectedDate(schedule.tripStart);
-          }
+        // 일정은 API 응답에서 가져오기
+        if (groupData.startDate) {
+          setTripStart(groupData.startDate);
+          setSelectedDate(groupData.startDate);
+        }
+        if (groupData.endDate) {
+          setTripEnd(groupData.endDate);
         }
       } catch (e) {
         console.error("데이터 조회 실패:", e);

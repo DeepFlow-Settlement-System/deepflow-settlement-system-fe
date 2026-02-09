@@ -5,32 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { getJoinInfo, joinGroup } from "@/api/groups";
-
-const GROUP_IMAGES_KEY = "group_images_v1";
-const GROUP_SCHEDULES_KEY = "group_schedules_v1";
-
-function loadGroupImage(groupId) {
-  try {
-    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed[groupId] || null;
-  } catch {
-    return null;
-  }
-}
-
-function loadGroupSchedule(groupId) {
-  try {
-    const raw = localStorage.getItem(GROUP_SCHEDULES_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed[groupId] || null;
-  } catch {
-    return null;
-  }
-}
+import { getJoinInfo, joinGroup, getGroupImage } from "@/api/groups";
 
 export default function JoinByInviteCodePage() {
   const navigate = useNavigate();
@@ -38,6 +13,7 @@ export default function JoinByInviteCodePage() {
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
   const [found, setFound] = useState(null);
+  const [imageUrl, setImageUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [joining, setJoining] = useState(false);
 
@@ -46,6 +22,7 @@ export default function JoinByInviteCodePage() {
   const onQuery = async () => {
     setErr("");
     setFound(null);
+    setImageUrl("");
     setLoading(true);
     try {
       const data = await getJoinInfo(code.toUpperCase());
@@ -54,10 +31,19 @@ export default function JoinByInviteCodePage() {
         groupId: data.id,
         inviteCode: code.toUpperCase(),
       });
+      
+      // 그룹 이미지 조회
+      try {
+        const imgUrl = await getGroupImage(data.id);
+        setImageUrl(imgUrl || data.imageUrl || "");
+      } catch (e) {
+        setImageUrl(data.imageUrl || "");
+      }
     } catch (e) {
       console.error("그룹 정보 조회 실패:", e);
       setErr(e?.message || "유효하지 않은 초대코드입니다.");
       setFound(null);
+      setImageUrl("");
     } finally {
       setLoading(false);
     }
@@ -116,9 +102,9 @@ export default function JoinByInviteCodePage() {
             <CardContent className="space-y-3">
               <div className="flex items-start gap-3">
                 <div className="h-12 w-12 rounded-xl border bg-muted overflow-hidden shrink-0">
-                  {loadGroupImage(found.groupId) ? (
+                  {imageUrl ? (
                     <img
-                      src={loadGroupImage(found.groupId)}
+                      src={imageUrl}
                       alt=""
                       className="h-full w-full object-cover"
                     />
@@ -138,17 +124,11 @@ export default function JoinByInviteCodePage() {
                       {found.group.description}
                     </div>
                   )}
-                  {(() => {
-                    const schedule = loadGroupSchedule(found.groupId);
-                    if (schedule?.tripStart && schedule?.tripEnd) {
-                      return (
-                        <div className="text-xs text-muted-foreground mt-1">
-                          일정: {schedule.tripStart} ~ {schedule.tripEnd}
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
+                  {found.group?.startDate && found.group?.endDate && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      일정: {found.group.startDate} ~ {found.group.endDate}
+                    </div>
+                  )}
                   <div className="text-xs text-muted-foreground mt-1">
                     그룹 ID: {found.groupId} · 코드: {found.inviteCode}
                   </div>

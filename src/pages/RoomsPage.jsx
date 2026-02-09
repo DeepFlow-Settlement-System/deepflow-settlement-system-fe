@@ -14,10 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { getGroups, createGroup } from "@/api/groups";
-
-const GROUP_IMAGES_KEY = "group_images_v1";
-const GROUP_SCHEDULES_KEY = "group_schedules_v1";
+import { getGroups, createGroup, uploadGroupImage, getGroupImage } from "@/api/groups";
 
 function toDateKey(date) {
   const d = new Date(date);
@@ -25,50 +22,6 @@ function toDateKey(date) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
-}
-
-function loadGroupImage(groupId) {
-  try {
-    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed[groupId] || null;
-  } catch {
-    return null;
-  }
-}
-
-function saveGroupImage(groupId, imageUrl) {
-  try {
-    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    parsed[groupId] = imageUrl;
-    localStorage.setItem(GROUP_IMAGES_KEY, JSON.stringify(parsed));
-  } catch {
-    // ignore
-  }
-}
-
-function loadGroupSchedule(groupId) {
-  try {
-    const raw = localStorage.getItem(GROUP_SCHEDULES_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed[groupId] || null;
-  } catch {
-    return null;
-  }
-}
-
-function saveGroupSchedule(groupId, schedule) {
-  try {
-    const raw = localStorage.getItem(GROUP_SCHEDULES_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    parsed[groupId] = schedule;
-    localStorage.setItem(GROUP_SCHEDULES_KEY, JSON.stringify(parsed));
-  } catch {
-    // ignore
-  }
 }
 
 function readFileAsDataURL(file) {
@@ -143,16 +96,28 @@ export default function RoomsPage() {
         setLoading(true);
         setError("");
         const data = await getGroups();
-        const groupsWithLocalData = (Array.isArray(data) ? data : []).map((g) => {
-          const schedule = loadGroupSchedule(g.id);
-          return {
-            ...g,
-            imageUrl: loadGroupImage(g.id), // 로컬에서 이미지 가져오기
-            tripStart: schedule?.tripStart || null,
-            tripEnd: schedule?.tripEnd || null,
-          };
-        });
-        setGroups(groupsWithLocalData);
+        const groupsList = Array.isArray(data) ? data : [];
+        
+        // 각 그룹의 이미지 조회
+        const groupsWithImages = await Promise.all(
+          groupsList.map(async (g) => {
+            let imageUrl = null;
+            try {
+              imageUrl = await getGroupImage(g.id);
+            } catch (e) {
+              // 이미지가 없거나 조회 실패 시 null
+              imageUrl = null;
+            }
+            return {
+              ...g,
+              imageUrl: imageUrl || g.imageUrl || null,
+              tripStart: g.startDate || null,
+              tripEnd: g.endDate || null,
+            };
+          })
+        );
+        
+        setGroups(groupsWithImages);
       } catch (e) {
         console.error("그룹 목록 조회 실패:", e);
         setError(e?.message || "그룹 목록을 불러오는데 실패했습니다.");
@@ -190,28 +155,41 @@ export default function RoomsPage() {
       const groupData = {
         name: groupName.trim(),
         ...(description.trim() && { description: description.trim() }),
+        ...(startDate && { startDate }),
+        ...(endDate && { endDate }),
       };
 
       const newGroup = await createGroup(groupData);
 
-      // 그룹 이미지를 로컬에 저장 (백엔드 미구현)
+      // 그룹 이미지 업로드
       if (groupImageUrl) {
-        saveGroupImage(newGroup.id, groupImageUrl);
+        try {
+          // base64 data URL을 Blob으로 변환
+          const response = await fetch(groupImageUrl);
+          const blob = await response.blob();
+          await uploadGroupImage(newGroup.id, blob);
+        } catch (e) {
+          console.error("이미지 업로드 실패:", e);
+          // 이미지 업로드 실패해도 그룹 생성은 성공했으므로 계속 진행
+        }
       }
 
-      // 그룹 일정을 로컬에 저장 (백엔드 미구현)
-      saveGroupSchedule(newGroup.id, {
-        tripStart: startDate,
-        tripEnd: endDate,
-      });
+      // 새로 생성된 그룹의 이미지 조회
+      let imageUrl = null;
+      try {
+        imageUrl = await getGroupImage(newGroup.id);
+      } catch (e) {
+        // 이미지가 없으면 null
+        imageUrl = null;
+      }
 
       // 새로 생성된 그룹을 목록에 추가
       setGroups((prev) => [
         {
           ...newGroup,
-          imageUrl: groupImageUrl || null,
-          tripStart: startDate,
-          tripEnd: endDate,
+          imageUrl: imageUrl || newGroup.imageUrl || null,
+          tripStart: newGroup.startDate || startDate,
+          tripEnd: newGroup.endDate || endDate,
         },
         ...prev,
       ]);
@@ -299,7 +277,7 @@ export default function RoomsPage() {
                   />
                 </div>
 
-                {/* 그룹 이미지 (로컬 저장만) */}
+                {/* 그룹 이미지 */}
                 <div className="grid gap-2">
                   <Label>그룹 이미지 (정사각형)</Label>
                   <Input
@@ -319,7 +297,6 @@ export default function RoomsPage() {
                         <div className="text-xs text-muted-foreground">
                           * 자동으로 정사각형으로 잘라 저장돼요.
                           <br />* 3MB 이하만 가능
-                          <br />* (백엔드 미구현으로 로컬에만 저장됩니다)
                         </div>
                         <Button
                           type="button"
@@ -333,12 +310,11 @@ export default function RoomsPage() {
                   ) : (
                     <div className="text-xs text-muted-foreground">
                       * 선택하면 자동으로 정사각형으로 저장돼요 (최대 3MB).
-                      <br />* (백엔드 미구현으로 로컬에만 저장됩니다)
                     </div>
                   )}
                 </div>
 
-                {/* 여행 일정 (로컬 저장만) */}
+                {/* 여행 일정 */}
                 <div className="grid gap-2">
                   <Label>여행 일정</Label>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -370,10 +346,6 @@ export default function RoomsPage() {
                       시작일이 종료일보다 늦을 수 없어요.
                     </p>
                   )}
-
-                  <div className="text-xs text-muted-foreground">
-                    * (백엔드 미구현으로 로컬에만 저장됩니다)
-                  </div>
                 </div>
               </div>
 
