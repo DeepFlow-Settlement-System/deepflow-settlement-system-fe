@@ -103,8 +103,8 @@ export default function RoomSettingsPage() {
   }, [roomId]);
 
   const inviteCode = useMemo(() => {
-    return inviteCodeData?.code
-      ? String(inviteCodeData.code).toUpperCase()
+    return inviteCodeData?.inviteCode
+      ? String(inviteCodeData.inviteCode).toUpperCase()
       : "";
   }, [inviteCodeData]);
 

@@ -152,12 +152,28 @@ export default function RoomsPage() {
     try {
       setError("");
 
+      // 날짜 형식 검증 및 정규화
+      const normalizeDate = (dateStr) => {
+        if (!dateStr || typeof dateStr !== 'string') return null;
+        // YYYY-MM-DD 형식인지 확인
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (dateRegex.test(dateStr.trim())) {
+          return dateStr.trim();
+        }
+        return null;
+      };
+
       const groupData = {
         name: groupName.trim(),
         ...(description.trim() && { description: description.trim() }),
-        ...(startDate && { startDate }),
-        ...(endDate && { endDate }),
+        ...(normalizeDate(startDate) && { startDate: normalizeDate(startDate) }),
+        ...(normalizeDate(endDate) && { endDate: normalizeDate(endDate) }),
       };
+
+      // 디버깅: 실제 전송되는 데이터 확인
+      console.log("전송할 데이터:", JSON.stringify(groupData, null, 2));
+      console.log("startDate 타입:", typeof startDate, "값:", startDate);
+      console.log("endDate 타입:", typeof endDate, "값:", endDate);
 
       const newGroup = await createGroup(groupData);
 
