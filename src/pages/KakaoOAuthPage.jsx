@@ -29,6 +29,7 @@ export default function KakaoOAuthPage() {
         );
 
         const token = res?.data?.accessToken ?? res?.accessToken ?? null;
+        // const token = "tmp";
         if (!token) throw new Error("accessToken을 받지 못했습니다.");
 
         localStorage.setItem("accessToken", token);
@@ -40,7 +41,7 @@ export default function KakaoOAuthPage() {
         // localStorage.removeItem("accessToken");  // ✅ 일단 지우지 말고 로그만 보자
         console.error(e);
         setMsg(e?.message || "로그인 실패");
-        navigate("/login", { replace: true });
+        // navigate("/login", { replace: true });
       }
     };
 

@@ -34,7 +34,7 @@ export default function App() {
 
       {/* 로그인 */}
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/oauth/kakao" element={<KakaoOAuthPage />} />
+      <Route path="/v1/oauth2/kakao" element={<KakaoOAuthPage />} />
 
       {/* 초대코드 참여 */}
       <Route path="/join" element={<JoinByInviteCodePage />} />
@@ -64,7 +64,7 @@ export default function App() {
         <Route path="settings" element={<RoomSettingsPage />} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<>Hello World</>} />
     </Routes>
   );
 }

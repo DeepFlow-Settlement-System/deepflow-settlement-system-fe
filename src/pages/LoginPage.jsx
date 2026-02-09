@@ -37,9 +37,20 @@ export default function LoginPage() {
       }
 
       // ✅ 디버깅용(필요 시)
-      // console.log("kakao login url:", rawUrl);
+      console.log(
+        "kakao login url:",
+        rawUrl,
+        rawUrl.replace("http://t2.mobidic.shop:12345", "http://localhost:3000"),
+      );
 
-      window.location.href = rawUrl;
+      if (isDev) {
+        window.location.href = rawUrl.replace(
+          "http://t2.mobidic.shop:12345",
+          "http://localhost:3000",
+        );
+      } else {
+        window.location.href = rawUrl;
+      }
     } catch (e) {
       console.error("onKakaoLogin error:", e);
       setErr(e?.message || "로그인 요청 실패");
@@ -78,12 +89,10 @@ export default function LoginPage() {
         {/* ✅ PROD에서만 카카오 로그인 버튼 활성 */}
         <button
           onClick={onKakaoLogin}
-          disabled={isDev}
+          // disabled={isDev}
           className={[
             "mt-3 w-full rounded-xl font-semibold py-3 transition",
-            isDev
-              ? "bg-yellow-200 text-black opacity-60 cursor-not-allowed"
-              : "bg-yellow-400 hover:bg-yellow-300 active:bg-yellow-500 text-black",
+            "bg-yellow-400 hover:bg-yellow-300 active:bg-yellow-500 text-black",
           ].join(" ")}
           type="button"
         >

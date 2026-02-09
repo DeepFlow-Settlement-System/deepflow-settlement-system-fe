@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { uploadReceiptImage, pollReceiptOcr } from "@/api/receipts";
+import { parseReceiptOcr } from "@/lib/receiptParser";
 
 const EXPENSES_KEY = (roomId) => `expenses_v2_${roomId}`;
 const MEMBERS_KEY = (roomId) => `room_members_v1_${roomId}`;
@@ -75,21 +77,35 @@ function newItem(members, patch = {}) {
  * 나중에 API 붙이면 여기만 교체하면 됨:
  *   const data = await ocrReceipt(file)
  */
-async function fakeOcr(_file) {
-  await new Promise((r) => setTimeout(r, 900));
+
+async function fakeOcr(file) {
+  if (!file) throw new Error("영수증 파일이 없습니다.");
+
+  // 1) 업로드
+  const receiptId = await uploadReceiptImage(file);
+  if (!receiptId) throw new Error("receiptId를 받지 못했습니다.");
+
+  // 2) OCR 상태 폴링
+  const { status, analysis } = await pollReceiptOcr(receiptId, {
+    intervalMs: 1000,
+    maxTries: 25,
+  });
+
+  if (status === "FAILED") throw new Error("OCR 실패");
+  if (status === "TIMEOUT") throw new Error("OCR 시간 초과");
+  if (!analysis) throw new Error("OCR 결과가 없습니다.");
+
+  // 3) 파싱 → 기존 fakeOcr 반환 형태 그대로 맞춤
+  const parsed = parseReceiptOcr(analysis);
+
   return {
-    merchant: "카페(더미)",
-    paidAt: new Date().toISOString(),
-    total: 24500,
-    items: [
-      { name: "아메리카노", price: 4500, qty: 2 },
-      { name: "라떼", price: 5000, qty: 2 },
-      { name: "케이크", price: 10500, qty: 1 },
-    ],
-    rawText: "(더미 OCR 텍스트)",
+    merchant: parsed.merchant || "",
+    paidAt: parsed.paidAt || new Date().toISOString(),
+    total: parsed.total || 0,
+    items: parsed.items || [],
+    rawText: "(OCR JSON 기반)",
   };
 }
-
 export default function RoomAddExpensePage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
