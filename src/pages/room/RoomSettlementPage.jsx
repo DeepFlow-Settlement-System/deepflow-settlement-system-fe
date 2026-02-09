@@ -188,15 +188,11 @@ export default function RoomSettlementPage() {
 
   const onRequestOne = (id) => {
     markRequested([id]);
-    // 지금은 더미 처리(나중에 API 붙이면 여기서 호출)
-    // alert("정산 요청을 보냈어요! (더미)");
   };
 
   const onResendOne = (id) => {
-    // 상태는 REQUESTED 유지
     const next = { ...statusMap, [id]: SETTLEMENT_STATUS.REQUESTED };
     persistStatusMap(next);
-    // alert("정산 요청을 재전송했어요! (더미)");
   };
 
   const onDoneOne = (id) => {
@@ -209,7 +205,6 @@ export default function RoomSettlementPage() {
     if (requestables.length === 0) return;
     markRequested(requestables.map((t) => t.id));
     setOpenBulk(false);
-    // alert("정산 요청을 한 번에 보냈어요! (더미)");
   };
 
   return (
@@ -217,7 +212,6 @@ export default function RoomSettlementPage() {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="text-xl font-bold m-0">정산</h2>
 
-        {/* ✅ 한 번에 요청 보내기 버튼 */}
         <Button onClick={onBulkOpen} disabled={requestables.length === 0}>
           한 번에(전부) 요청 보내기
         </Button>
@@ -254,7 +248,6 @@ export default function RoomSettlementPage() {
         </div>
       </Card>
 
-      {/* 리스트 */}
       {shown.length === 0 ? (
         <div className="text-sm text-muted-foreground">
           정산할 내역이 없습니다. (지출/참여자 데이터를 확인해주세요)
@@ -262,7 +255,6 @@ export default function RoomSettlementPage() {
       ) : (
         <div className="grid gap-3">
           {shown.map((t) => {
-            // ✅ 내가 받을 돈일 때만 요청/재전송/완료 버튼 노출
             const canRequest = t.to === me;
 
             return (
@@ -279,7 +271,6 @@ export default function RoomSettlementPage() {
         </div>
       )}
 
-      {/* ✅ 전체 요청 팝업 */}
       <Dialog open={openBulk} onOpenChange={setOpenBulk}>
         <DialogContent>
           <DialogHeader>

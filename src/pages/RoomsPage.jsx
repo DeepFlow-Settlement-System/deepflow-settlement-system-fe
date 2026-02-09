@@ -1,4 +1,3 @@
-// src/pages/RoomsPage.jsx
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -15,22 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
-const STORAGE_KEY = "rooms_v2";
-
-function loadRooms() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRooms(rooms) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms));
-}
+import { ensureInviteCodeForRoom, loadRooms, saveRooms } from "@/storage/rooms";
 
 function toDateKey(date) {
   const d = new Date(date);
@@ -49,11 +33,6 @@ function readFileAsDataURL(file) {
   });
 }
 
-/**
- * ✅ 정사각형 센터 크롭 + 리사이즈 + JPEG 압축
- * - size: 최종 정사각형 한 변 px
- * - quality: 0~1 (jpeg)
- */
 async function cropSquareToJpegDataURL(file, size = 480, quality = 0.82) {
   const dataUrl = await readFileAsDataURL(file);
 
@@ -67,7 +46,6 @@ async function cropSquareToJpegDataURL(file, size = 480, quality = 0.82) {
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
 
-  // center-crop square
   const side = Math.min(w, h);
   const sx = Math.floor((w - side) / 2);
   const sy = Math.floor((h - side) / 2);
@@ -93,7 +71,6 @@ export default function RoomsPage() {
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
 
-  // ✅ 그룹 이미지 (정사각형 dataURL)
   const [roomImageUrl, setRoomImageUrl] = useState("");
 
   const canCreate = useMemo(() => {
@@ -118,7 +95,7 @@ export default function RoomsPage() {
   };
 
   const goRoom = (roomId) => {
-    navigate(`/rooms/${roomId}/invite`);
+    navigate(`/rooms/${roomId}`);
   };
 
   const handleCreateRoom = () => {
@@ -129,7 +106,7 @@ export default function RoomsPage() {
       name: roomName.trim(),
       tripStart: startDate,
       tripEnd: endDate,
-      imageUrl: roomImageUrl || "", // ✅ 추가
+      imageUrl: roomImageUrl || "",
       createdAt: new Date().toISOString(),
     };
 
@@ -137,22 +114,25 @@ export default function RoomsPage() {
     setRooms(nextRooms);
     saveRooms(nextRooms);
 
+    // ✅ 방 생성 시 초대코드 보장
+    ensureInviteCodeForRoom(newRoom.id);
+
     setOpen(false);
     resetForm();
+
+    // ✅ 바로 초대 전용 페이지로 이동
     navigate(`/rooms/${newRoom.id}/invite`);
   };
 
   const handlePickImage = async (file) => {
     if (!file) return;
 
-    // ✅ 3MB 제한
     const maxBytes = 3 * 1024 * 1024;
     if (file.size > maxBytes) {
       alert("이미지 파일은 최대 3MB까지 업로드할 수 있어요.");
       return;
     }
 
-    // 이미지 파일인지 최소 체크
     if (!file.type?.startsWith("image/")) {
       alert("이미지 파일만 업로드할 수 있어요.");
       return;
@@ -169,8 +149,10 @@ export default function RoomsPage() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-3xl px-4 py-8">
-        {/* 헤더 */}
-        <div className="flex items-center justify-between gap-3">
+        {/* 디버그 표시(원하면 삭제 가능) */}
+        <div className="text-red-500 font-bold">ROOMS UPDATED ✅</div>
+
+        <div className="flex items-center justify-between gap-3 mt-3">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Rooms</h1>
             <p className="text-sm text-muted-foreground">
@@ -178,118 +160,122 @@ export default function RoomsPage() {
             </p>
           </div>
 
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={openModal}>+ 방 만들기</Button>
-            </DialogTrigger>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => navigate("/join")}>
+              초대코드로 참여
+            </Button>
 
-            <DialogContent className="sm:max-w-[460px]">
-              <DialogHeader>
-                <DialogTitle>방 만들기</DialogTitle>
-              </DialogHeader>
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button onClick={openModal}>+ 방 만들기</Button>
+              </DialogTrigger>
 
-              <div className="grid gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="roomName">방 이름</Label>
-                  <Input
-                    id="roomName"
-                    value={roomName}
-                    onChange={(e) => setRoomName(e.target.value)}
-                    placeholder="예) 제주도 여행"
-                    autoFocus
-                  />
-                </div>
+              <DialogContent className="sm:max-w-[460px]">
+                <DialogHeader>
+                  <DialogTitle>방 만들기</DialogTitle>
+                </DialogHeader>
 
-                {/* ✅ 그룹 이미지 */}
-                <div className="grid gap-2">
-                  <Label>그룹 이미지 (정사각형)</Label>
-                  <Input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => handlePickImage(e.target.files?.[0])}
-                  />
-
-                  {roomImageUrl ? (
-                    <div className="flex items-center gap-3">
-                      <img
-                        src={roomImageUrl}
-                        alt="room preview"
-                        className="h-20 w-20 rounded-xl border object-cover"
-                      />
-                      <div className="grid gap-2">
-                        <div className="text-xs text-muted-foreground">
-                          * 자동으로 정사각형으로 잘라 저장돼요.
-                          <br />* 3MB 이하만 가능
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => setRoomImageUrl("")}
-                        >
-                          이미지 제거
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground">
-                      * 선택하면 자동으로 정사각형으로 저장돼요 (최대 3MB).
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid gap-2">
-                  <Label>여행 일정</Label>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div className="grid gap-2">
-                      <Label className="text-xs text-muted-foreground">
-                        시작
-                      </Label>
-                      <Input
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label className="text-xs text-muted-foreground">
-                        종료
-                      </Label>
-                      <Input
-                        type="date"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                      />
-                    </div>
+                <div className="grid gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="roomName">방 이름</Label>
+                    <Input
+                      id="roomName"
+                      value={roomName}
+                      onChange={(e) => setRoomName(e.target.value)}
+                      placeholder="예) 제주도 여행"
+                      autoFocus
+                    />
                   </div>
 
-                  {startDate > endDate && (
-                    <p className="text-sm font-medium text-destructive">
-                      시작일이 종료일보다 늦을 수 없어요.
-                    </p>
-                  )}
-                </div>
-              </div>
+                  <div className="grid gap-2">
+                    <Label>그룹 이미지 (정사각형)</Label>
+                    <Input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handlePickImage(e.target.files?.[0])}
+                    />
 
-              <DialogFooter className="gap-2 sm:gap-0">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setOpen(false);
-                    resetForm();
-                  }}
-                >
-                  취소
-                </Button>
-                <Button onClick={handleCreateRoom} disabled={!canCreate}>
-                  생성
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                    {roomImageUrl ? (
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={roomImageUrl}
+                          alt="room preview"
+                          className="h-20 w-20 rounded-xl border object-cover"
+                        />
+                        <div className="grid gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            * 자동으로 정사각형으로 잘라 저장돼요.
+                            <br />* 3MB 이하만 가능
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setRoomImageUrl("")}
+                          >
+                            이미지 제거
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">
+                        * 선택하면 자동으로 정사각형으로 저장돼요 (최대 3MB).
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label>여행 일정</Label>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="grid gap-2">
+                        <Label className="text-xs text-muted-foreground">
+                          시작
+                        </Label>
+                        <Input
+                          type="date"
+                          value={startDate}
+                          onChange={(e) => setStartDate(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label className="text-xs text-muted-foreground">
+                          종료
+                        </Label>
+                        <Input
+                          type="date"
+                          value={endDate}
+                          onChange={(e) => setEndDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {startDate > endDate && (
+                      <p className="text-sm font-medium text-destructive">
+                        시작일이 종료일보다 늦을 수 없어요.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <DialogFooter className="gap-2 sm:gap-0">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setOpen(false);
+                      resetForm();
+                    }}
+                  >
+                    취소
+                  </Button>
+                  <Button onClick={handleCreateRoom} disabled={!canCreate}>
+                    생성
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
-        {/* 리스트 */}
         <div className="mt-6 grid gap-3">
           {rooms.length === 0 ? (
             <Card>
