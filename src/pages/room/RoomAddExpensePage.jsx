@@ -35,48 +35,13 @@ function newItem(memberUserIds, patch = {}) {
     itemName: "",
     mode: ITEM_MODE.PER_PERSON,
     price: "",
-    itemParticipants: memberUserIds.length ? [{ userId: memberUserIds[0] }] : [],
+    itemParticipants: memberUserIds.length
+      ? [{ userId: memberUserIds[0] }]
+      : [],
     ...patch,
   };
 }
 
-<<<<<<< HEAD
-/**
- * ✅ UI 개발용 더미 OCR 결과
- * 나중에 API 붙이면 여기만 교체하면 됨:
- *   const data = await ocrReceipt(file)
- */
-
-async function fakeOcr(file) {
-  if (!file) throw new Error("영수증 파일이 없습니다.");
-
-  // 1) 업로드
-  const receiptId = await uploadReceiptImage(file);
-  if (!receiptId) throw new Error("receiptId를 받지 못했습니다.");
-
-  // 2) OCR 상태 폴링
-  const { status, analysis } = await pollReceiptOcr(receiptId, {
-    intervalMs: 1000,
-    maxTries: 25,
-  });
-
-  if (status === "FAILED") throw new Error("OCR 실패");
-  if (status === "TIMEOUT") throw new Error("OCR 시간 초과");
-  if (!analysis) throw new Error("OCR 결과가 없습니다.");
-
-  // 3) 파싱 → 기존 fakeOcr 반환 형태 그대로 맞춤
-  const parsed = parseReceiptOcr(analysis);
-
-  return {
-    merchant: parsed.merchant || "",
-    paidAt: parsed.paidAt || new Date().toISOString(),
-    total: parsed.total || 0,
-    items: parsed.items || [],
-    rawText: "(OCR JSON 기반)",
-  };
-}
-=======
->>>>>>> origin/feat/connect-backend-api
 export default function RoomAddExpensePage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
@@ -135,16 +100,23 @@ export default function RoomAddExpensePage() {
 
   const toggleParticipant = (userId) => {
     setParticipants((prev) =>
-      prev.includes(userId) ? prev.filter((x) => x !== userId) : [...prev, userId],
+      prev.includes(userId)
+        ? prev.filter((x) => x !== userId)
+        : [...prev, userId],
     );
   };
 
   // 혼합정산(품목)
   const [items, setItems] = useState(() => [newItem([])]);
-  
+
   // members가 로드되면 items 초기화
   useEffect(() => {
-    if (members.length > 0 && items.length === 1 && !items[0].itemName && !items[0].price) {
+    if (
+      members.length > 0 &&
+      items.length === 1 &&
+      !items[0].itemName &&
+      !items[0].price
+    ) {
       setItems([newItem(members)]);
     }
   }, [members]);
@@ -163,7 +135,9 @@ export default function RoomAddExpensePage() {
     setItems((prev) =>
       prev.map((it) => {
         if (it.id !== itemId) return it;
-        const participants = Array.isArray(it.itemParticipants) ? it.itemParticipants : [];
+        const participants = Array.isArray(it.itemParticipants)
+          ? it.itemParticipants
+          : [];
         const exists = participants.some((p) => p.userId === userId);
         const nextParticipants = exists
           ? participants.filter((p) => p.userId !== userId)
@@ -175,7 +149,9 @@ export default function RoomAddExpensePage() {
 
   const totalItemsAmount = useMemo(() => {
     return items.reduce((sum, it) => {
-      const participantCount = Array.isArray(it.itemParticipants) ? it.itemParticipants.length : 0;
+      const participantCount = Array.isArray(it.itemParticipants)
+        ? it.itemParticipants.length
+        : 0;
       if (it.mode === ITEM_MODE.SHARED_SPLIT)
         return sum + (Number(it.price) || 0);
       return sum + (Number(it.price) || 0) * participantCount;
@@ -194,7 +170,11 @@ export default function RoomAddExpensePage() {
     if (!items || items.length === 0) return false;
     for (const it of items) {
       if ((it.itemName || "").trim().length === 0) return false;
-      if (!Array.isArray(it.itemParticipants) || it.itemParticipants.length === 0) return false;
+      if (
+        !Array.isArray(it.itemParticipants) ||
+        it.itemParticipants.length === 0
+      )
+        return false;
       if (!(Number(it.price) > 0)) return false;
     }
     return totalItemsAmount > 0;
@@ -222,9 +202,7 @@ export default function RoomAddExpensePage() {
         payerUserId,
         settlementType: splitType === SPLIT.EQUAL ? "N_BBANG" : "ITEMIZED",
         totalAmount: String(
-          splitType === SPLIT.EQUAL
-            ? Number(amount)
-            : totalItemsAmount
+          splitType === SPLIT.EQUAL ? Number(amount) : totalItemsAmount,
         ),
         participants: participants.map((userId) => ({ userId })),
         ...(splitType === SPLIT.ITEM && {
@@ -315,10 +293,13 @@ export default function RoomAddExpensePage() {
     // TODO: 실제 OCR 결과 형식에 맞게 파싱 로직 구현
     // 일단 기본 구조만 유지
     try {
-      const receiptData = typeof ocrResult === "string" ? JSON.parse(ocrResult) : ocrResult;
+      const receiptData =
+        typeof ocrResult === "string" ? JSON.parse(ocrResult) : ocrResult;
       const storeInfo = receiptData?.images?.[0]?.receipt?.result?.storeInfo;
-      const items = receiptData?.images?.[0]?.receipt?.result?.subResults?.[0]?.items || [];
-      const totalPrice = receiptData?.images?.[0]?.receipt?.result?.totalPrice?.price?.formatted;
+      const items =
+        receiptData?.images?.[0]?.receipt?.result?.subResults?.[0]?.items || [];
+      const totalPrice =
+        receiptData?.images?.[0]?.receipt?.result?.totalPrice?.price?.formatted;
 
       if (storeInfo?.name?.formatted?.value && !title.trim()) {
         setTitle(`${storeInfo.name.formatted.value} 영수증`);
@@ -336,9 +317,12 @@ export default function RoomAddExpensePage() {
         setItems((prev) => {
           const mapped = items.slice(0, 15).map((it) =>
             newItem(members, {
-              itemName: String(it.name?.formatted?.value || "").trim() || "품목",
+              itemName:
+                String(it.name?.formatted?.value || "").trim() || "품목",
               mode: ITEM_MODE.PER_PERSON,
-              price: String(Number(it.price?.price?.formatted?.replace(/,/g, "") || 0)),
+              price: String(
+                Number(it.price?.price?.formatted?.replace(/,/g, "") || 0),
+              ),
               itemParticipants: members.map((userId) => ({ userId })),
             }),
           );
@@ -608,7 +592,9 @@ export default function RoomAddExpensePage() {
 
             <div className="grid gap-3">
               {items.map((it, idx) => {
-                const cnt = Array.isArray(it.itemParticipants) ? it.itemParticipants.length : 0;
+                const cnt = Array.isArray(it.itemParticipants)
+                  ? it.itemParticipants.length
+                  : 0;
                 const price = Number(it.price) || 0;
                 const lineTotal =
                   it.mode === ITEM_MODE.SHARED_SPLIT ? price : price * cnt;
@@ -670,7 +656,9 @@ export default function RoomAddExpensePage() {
 
                       <div className="grid gap-2">
                         <Label>
-                          {it.mode === ITEM_MODE.PER_PERSON ? "1인당 가격" : "총액(참여자 n빵)"}
+                          {it.mode === ITEM_MODE.PER_PERSON
+                            ? "1인당 가격"
+                            : "총액(참여자 n빵)"}
                         </Label>
                         <Input
                           value={it.price}
@@ -694,7 +682,9 @@ export default function RoomAddExpensePage() {
                                 type="checkbox"
                                 checked={
                                   Array.isArray(it.itemParticipants) &&
-                                  it.itemParticipants.some((p) => p.userId === userId)
+                                  it.itemParticipants.some(
+                                    (p) => p.userId === userId,
+                                  )
                                 }
                                 onChange={() => toggleItemUser(it.id, userId)}
                               />
