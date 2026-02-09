@@ -44,6 +44,14 @@ export default function LoginPage() {
       );
 
       if (isDev) {
+        console.log("DEV 모드: 로컬호스트로 카카오 로그인 URL 변환");
+        console.log(
+          "rawUrl:",
+          rawUrl.replace(
+            "http://t2.mobidic.shop:12345",
+            "http://localhost:3000",
+          ),
+        );
         window.location.href = rawUrl.replace(
           "http://t2.mobidic.shop:12345",
           "http://localhost:3000",

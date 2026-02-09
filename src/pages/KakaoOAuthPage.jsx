@@ -7,6 +7,7 @@ export default function KakaoOAuthPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [msg, setMsg] = useState("로그인 처리 중...");
+  const isDev = import.meta.env.DEV;
 
   const didRun = useRef(false);
 
@@ -24,18 +25,33 @@ export default function KakaoOAuthPage() {
         if (!code) throw new Error("인가 코드(code)가 없습니다.");
 
         // ✅ code -> accessToken
-        const res = await apiFetch(
-          `/api/auth/v1/oauth2/kakao?code=${encodeURIComponent(code)}`,
-        );
+        if (isDev) {
+          const res = await apiFetch(
+            `/api/auth/dev/v1/oauth2/kakao?code=${encodeURIComponent(code)}`,
+          );
 
-        const token = res?.data?.accessToken ?? res?.accessToken ?? null;
-        // const token = "tmp";
-        if (!token) throw new Error("accessToken을 받지 못했습니다.");
+          const token = res?.data?.accessToken ?? res?.accessToken ?? null;
+          // const token = "tmp";
+          if (!token) throw new Error("accessToken을 받지 못했습니다.");
 
-        localStorage.setItem("accessToken", token);
+          localStorage.setItem("accessToken", token);
 
-        setMsg("완료! Rooms로 이동합니다...");
-        navigate("/rooms", { replace: true });
+          setMsg("완료! Rooms로 이동합니다...");
+          navigate("/rooms", { replace: true });
+        } else {
+          const res = await apiFetch(
+            `/api/auth/v1/oauth2/kakao?code=${encodeURIComponent(code)}`,
+          );
+
+          const token = res?.data?.accessToken ?? res?.accessToken ?? null;
+          // const token = "tmp";
+          if (!token) throw new Error("accessToken을 받지 못했습니다.");
+
+          localStorage.setItem("accessToken", token);
+
+          setMsg("완료! Rooms로 이동합니다...");
+          navigate("/rooms", { replace: true });
+        }
       } catch (e) {
         // ❗여기서 토큰을 지우면 '2번째 실패' 때 토큰이 날아가서 무한 튕김됨
         // localStorage.removeItem("accessToken");  // ✅ 일단 지우지 말고 로그만 보자
