@@ -71,8 +71,7 @@ function computeTransfers(expenses, userIdToNameMap) {
           const participantUserId = p.userId || p;
           if (participantUserId === payerUserId) continue;
           const participantName =
-            userIdToNameMap[participantUserId] ||
-            `사용자 ${participantUserId}`;
+            userIdToNameMap[participantUserId] || `사용자 ${participantUserId}`;
           addTransfer(transfers, participantUserId, payerUserId, share);
         }
       }
@@ -162,7 +161,8 @@ export default function RoomSettlementPage() {
     }
     if (currentUser) {
       const userId = currentUser.id || currentUser.userId;
-      const name = currentUser.name || currentUser.username || `사용자 ${userId}`;
+      const name =
+        currentUser.name || currentUser.username || `사용자 ${userId}`;
       map[userId] = name;
     }
     return map;
@@ -204,8 +204,7 @@ export default function RoomSettlementPage() {
   // ✅ "요청 가능한 것" = 내가 받을 돈(to === currentUserId) 이고 READY인 것
   const requestables = useMemo(() => {
     return transfers.filter(
-      (t) =>
-        t.to === currentUserId && t.status === SETTLEMENT_STATUS.READY,
+      (t) => t.to === currentUserId && t.status === SETTLEMENT_STATUS.READY,
     );
   }, [transfers, currentUserId]);
 
@@ -374,7 +373,8 @@ export default function RoomSettlementPage() {
                     className="p-3 flex items-center justify-between"
                   >
                     <div className="text-sm">
-                      <b>{t.fromName || `사용자 ${t.from}`}</b> (나에게 보내야 함)
+                      <b>{t.fromName || `사용자 ${t.from}`}</b> (나에게 보내야
+                      함)
                     </div>
                     <div className="text-sm font-semibold">
                       {t.amount.toLocaleString()}원

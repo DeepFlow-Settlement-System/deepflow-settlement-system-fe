@@ -5,7 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getGroupDetail, getInviteCode, leaveGroup, getGroupImage, uploadGroupImage, deleteGroupImage } from "@/api/groups";
+import {
+  getGroupDetail,
+  getInviteCode,
+  leaveGroup,
+  getGroupImage,
+  uploadGroupImage,
+  deleteGroupImage,
+} from "@/api/groups";
 import { getMe } from "@/api/users";
 
 function readFileAsDataURL(file) {
@@ -74,7 +81,7 @@ export default function RoomSettingsPage() {
         setGroup(groupData);
         setInviteCodeData(inviteData);
         setCurrentUser(userData);
-        
+
         // 그룹 이미지 조회
         try {
           const imgUrl = await getGroupImage(Number(roomId));
@@ -372,9 +379,12 @@ export default function RoomSettingsPage() {
                       className="flex items-center justify-between rounded-lg border px-3 py-2"
                     >
                       <span className="text-sm font-medium">
-                        {m.name || m.username || `사용자 ${m.userId || m.id || m}`}
+                        {m.name ||
+                          m.username ||
+                          `사용자 ${m.userId || m.id || m}`}
                         {currentUser &&
-                        (m.userId || m.id) === (currentUser.id || currentUser.userId)
+                        (m.userId || m.id) ===
+                          (currentUser.id || currentUser.userId)
                           ? " (나)"
                           : ""}
                       </span>

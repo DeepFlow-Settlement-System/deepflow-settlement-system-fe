@@ -20,7 +20,7 @@ export default function RoomLayout() {
         setLoading(true);
         const data = await getGroupDetail(Number(roomId));
         setGroup(data);
-        
+
         // 그룹 이미지 조회
         try {
           const imgUrl = await getGroupImage(Number(roomId));
