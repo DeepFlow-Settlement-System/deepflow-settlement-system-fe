@@ -3,32 +3,44 @@ import { NavLink, Outlet, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { useMemo } from "react";
-
-const ROOMS_KEY = "rooms_v2";
-
-function loadRooms() {
-  try {
-    const raw = localStorage.getItem(ROOMS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+import { useEffect, useState } from "react";
+import { getGroupDetail, getGroupImage } from "@/api/groups";
 
 export default function RoomLayout() {
   const { roomId } = useParams();
   const base = `/rooms/${roomId}`;
 
-  const room = useMemo(() => {
-    const rooms = loadRooms();
-    return rooms.find((r) => String(r.id) === String(roomId)) || null;
+  const [group, setGroup] = useState(null);
+  const [imageUrl, setImageUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchGroup = async () => {
+      try {
+        setLoading(true);
+        const data = await getGroupDetail(Number(roomId));
+        setGroup(data);
+        
+        // 그룹 이미지 조회
+        try {
+          const imgUrl = await getGroupImage(Number(roomId));
+          setImageUrl(imgUrl || data.imageUrl || "");
+        } catch (e) {
+          // 이미지 조회 실패 시 빈 문자열 (No Img 표시)
+          setImageUrl(data.imageUrl || "");
+        }
+      } catch (e) {
+        console.error("그룹 정보 조회 실패:", e);
+        setGroup(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGroup();
   }, [roomId]);
 
-  const imageUrl = room?.imageUrl || "";
-  const roomName = room?.name || "";
+  const roomName = group?.name || "";
 
   const linkCls = ({ isActive }) =>
     isActive

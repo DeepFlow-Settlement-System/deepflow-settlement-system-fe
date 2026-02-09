@@ -5,42 +5,62 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-
-import { findRoomByInviteCode, joinRoomByInviteCode } from "@/storage/rooms";
-
-const ME_KEY = "user_name_v1";
-function loadMe() {
-  return localStorage.getItem(ME_KEY) || "현서";
-}
+import { getJoinInfo, joinGroup, getGroupImage } from "@/api/groups";
 
 export default function JoinByInviteCodePage() {
   const navigate = useNavigate();
-  const me = loadMe();
 
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
   const [found, setFound] = useState(null);
+  const [imageUrl, setImageUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [joining, setJoining] = useState(false);
 
   const canQuery = useMemo(() => code.trim().length >= 4, [code]);
 
-  const onQuery = () => {
+  const onQuery = async () => {
     setErr("");
-    const f = findRoomByInviteCode(code);
-    if (!f) {
+    setFound(null);
+    setImageUrl("");
+    setLoading(true);
+    try {
+      const data = await getJoinInfo(code.toUpperCase());
+      setFound({
+        group: data,
+        groupId: data.id,
+        inviteCode: code.toUpperCase(),
+      });
+      
+      // 그룹 이미지 조회
+      try {
+        const imgUrl = await getGroupImage(data.id);
+        setImageUrl(imgUrl || data.imageUrl || "");
+      } catch (e) {
+        setImageUrl(data.imageUrl || "");
+      }
+    } catch (e) {
+      console.error("그룹 정보 조회 실패:", e);
+      setErr(e?.message || "유효하지 않은 초대코드입니다.");
       setFound(null);
-      setErr("유효하지 않은 초대코드입니다.");
-      return;
+      setImageUrl("");
+    } finally {
+      setLoading(false);
     }
-    setFound(f);
   };
 
-  const onJoin = () => {
+  const onJoin = async () => {
+    if (!found) return;
     try {
       setErr("");
-      const res = joinRoomByInviteCode({ inviteCode: code, me });
-      navigate(`/rooms/${res.roomId}`, { replace: true });
+      setJoining(true);
+      await joinGroup(code.toUpperCase());
+      navigate(`/rooms/${found.groupId}`, { replace: true });
     } catch (e) {
+      console.error("그룹 참여 실패:", e);
       setErr(e?.message || "참여 실패");
+    } finally {
+      setJoining(false);
     }
   };
 
@@ -59,15 +79,11 @@ export default function JoinByInviteCodePage() {
                 onChange={(e) => setCode(e.target.value.toUpperCase())}
                 placeholder="예) AB12CD34"
               />
-              <div className="text-xs text-muted-foreground">
-                * 지금은 로컬 저장 기반이라 같은 브라우저/저장소에서만
-                조회됩니다.
-              </div>
             </div>
 
             <div className="flex gap-2 flex-wrap">
-              <Button onClick={onQuery} disabled={!canQuery}>
-                그룹정보 조회
+              <Button onClick={onQuery} disabled={!canQuery || loading}>
+                {loading ? "조회 중..." : "그룹정보 조회"}
               </Button>
               <Button variant="outline" onClick={() => navigate("/rooms")}>
                 방 목록으로
@@ -86,9 +102,9 @@ export default function JoinByInviteCodePage() {
             <CardContent className="space-y-3">
               <div className="flex items-start gap-3">
                 <div className="h-12 w-12 rounded-xl border bg-muted overflow-hidden shrink-0">
-                  {found.room?.imageUrl ? (
+                  {imageUrl ? (
                     <img
-                      src={found.room.imageUrl}
+                      src={imageUrl}
                       alt=""
                       className="h-full w-full object-cover"
                     />
@@ -101,20 +117,26 @@ export default function JoinByInviteCodePage() {
 
                 <div className="min-w-0">
                   <div className="font-semibold truncate">
-                    {found.room?.name || "(이름 없음)"}
+                    {found.group?.name || "(이름 없음)"}
                   </div>
+                  {found.group?.description && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {found.group.description}
+                    </div>
+                  )}
+                  {found.group?.startDate && found.group?.endDate && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      일정: {found.group.startDate} ~ {found.group.endDate}
+                    </div>
+                  )}
                   <div className="text-xs text-muted-foreground mt-1">
-                    일정: {found.room?.tripStart ?? "?"} ~{" "}
-                    {found.room?.tripEnd ?? "?"}
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    roomId: {found.roomId} · code: {found.inviteCode}
+                    그룹 ID: {found.groupId} · 코드: {found.inviteCode}
                   </div>
                 </div>
               </div>
 
-              <Button onClick={onJoin} className="w-full">
-                참여하기
+              <Button onClick={onJoin} className="w-full" disabled={joining}>
+                {joining ? "참여 중..." : "참여하기"}
               </Button>
 
               <div className="text-xs text-muted-foreground">

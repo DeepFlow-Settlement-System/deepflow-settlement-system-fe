@@ -1,50 +1,35 @@
 // src/api/receipts.js
-import { apiFetch } from "@/api/client";
+import { apiFetch } from "./client";
 
-// POST /api/receipts (multipart/form-data)
-export async function uploadReceiptImage(file) {
-  const fd = new FormData();
-  fd.append("image", file); // ✅ swagger 기준 필드명 image
+/**
+ * 영수증 업로드 및 OCR 실행
+ * @param {File} file - 이미지 파일
+ * @returns {Promise<Object>} {receiptId}
+ */
+export async function uploadReceipt(file) {
+  const formData = new FormData();
+  formData.append("image", file);
 
-  const res = await apiFetch("/api/receipts", {
+  return await apiFetch("/api/receipts", {
     method: "POST",
-    body: fd,
-    // ❗headers에 Content-Type 넣지 말기 (boundary 깨짐)
+    body: formData,
   });
-
-  return res?.receiptId ?? res?.data?.receiptId ?? null;
 }
 
-export async function getReceiptOcrStatus(receiptId) {
-  return apiFetch(`/api/receipts/${receiptId}/status`, { method: "GET" });
+/**
+ * 영수증 OCR 상태 조회
+ * @param {number} receiptId - 영수증 ID
+ * @returns {Promise<Object>} {ocrStatus: "PENDING" | "SUCCESS" | "FAILED"}
+ */
+export async function getOcrStatus(receiptId) {
+  return await apiFetch(`/api/receipts/${receiptId}/status`);
 }
 
-export async function getReceiptOcrAnalysis(receiptId) {
-  return apiFetch(`/api/receipts/${receiptId}/analysis`, { method: "GET" });
-}
-
-// 최대 maxTries번 상태 조회 → SUCCESS면 analysis 가져옴
-export async function pollReceiptOcr(
-  receiptId,
-  { intervalMs = 1000, maxTries = 25 } = {},
-) {
-  for (let i = 0; i < maxTries; i++) {
-    const st = await getReceiptOcrStatus(receiptId);
-
-    const status = st?.ocrStatus ?? st?.data?.ocrStatus ?? null;
-
-    if (status === "SUCCESS") {
-      const analysis = await getReceiptOcrAnalysis(receiptId);
-      return { status, analysis };
-    }
-
-    if (status === "FAILED") {
-      return { status, analysis: null };
-    }
-
-    // PENDING 등
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-
-  return { status: "TIMEOUT", analysis: null };
+/**
+ * 영수증 OCR 결과 조회 (SUCCESS 상태일 때만)
+ * @param {number} receiptId - 영수증 ID
+ * @returns {Promise<Object>} OCR 결과 (ReceiptOcrResult JSON)
+ */
+export async function getOcrAnalysis(receiptId) {
+  return await apiFetch(`/api/receipts/${receiptId}/analysis`);
 }

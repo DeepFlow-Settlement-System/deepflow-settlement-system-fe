@@ -5,25 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-import {
-  ensureInviteCodeForRoom,
-  findRoomById,
-  leaveRoom,
-  loadMembers,
-  saveMembers,
-  loadRooms,
-  saveRooms,
-} from "@/storage/rooms";
-
-const ME_KEY = "user_name_v1";
-
-function loadMe() {
-  return localStorage.getItem(ME_KEY) || "현서";
-}
-function saveMe(name) {
-  localStorage.setItem(ME_KEY, name);
-}
+import { getGroupDetail, getInviteCode, leaveGroup, getGroupImage, uploadGroupImage, deleteGroupImage } from "@/api/groups";
+import { getMe } from "@/api/users";
 
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -65,7 +48,11 @@ export default function RoomSettingsPage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
 
-  const [room, setRoom] = useState(null);
+  const [group, setGroup] = useState(null);
+  const [inviteCodeData, setInviteCodeData] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -75,18 +62,44 @@ export default function RoomSettingsPage() {
   };
 
   useEffect(() => {
-    const r = findRoomById(roomId);
-    if (!r) {
-      setRoom(null);
-      return;
-    }
-    const withCode = ensureInviteCodeForRoom(roomId);
-    setRoom(withCode || r);
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError("");
+        const [groupData, inviteData, userData] = await Promise.all([
+          getGroupDetail(Number(roomId)),
+          getInviteCode(Number(roomId)),
+          getMe().catch(() => null), // 실패해도 계속 진행
+        ]);
+        setGroup(groupData);
+        setInviteCodeData(inviteData);
+        setCurrentUser(userData);
+        
+        // 그룹 이미지 조회
+        try {
+          const imgUrl = await getGroupImage(Number(roomId));
+          setRoomImageUrl(imgUrl || groupData.imageUrl || "");
+        } catch (e) {
+          setRoomImageUrl(groupData.imageUrl || "");
+        }
+      } catch (e) {
+        console.error("데이터 조회 실패:", e);
+        setError(e?.message || "데이터를 불러오는데 실패했습니다.");
+        setGroup(null);
+        setInviteCodeData(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
   }, [roomId]);
 
   const inviteCode = useMemo(() => {
-    return room?.inviteCode ? String(room.inviteCode).toUpperCase() : "";
-  }, [room]);
+    return inviteCodeData?.code
+      ? String(inviteCodeData.code).toUpperCase()
+      : "";
+  }, [inviteCodeData]);
 
   const copyInviteCode = async () => {
     if (!inviteCode) return;
@@ -103,71 +116,27 @@ export default function RoomSettingsPage() {
     }
   };
 
-  const [me, setMe] = useState(() => loadMe());
-  const updateMe = () => {
-    const next = me.trim() || "현서";
-    const old = loadMe();
-    saveMe(next);
-    setMe(next);
+  const [roomImageUrl, setRoomImageUrl] = useState("");
 
-    const members = loadMembers(roomId);
-    const replaced = members.map((m) => (m === old ? next : m));
-    saveMembers(roomId, Array.from(new Set(replaced)));
-    toast("내 이름 저장됨");
-  };
-
-  const [members, setMembers] = useState(() => {
-    const m = loadMembers(roomId);
-    const who = loadMe();
-    const base = m.length === 0 ? [who] : m;
-    return base.includes(who) ? base : [who, ...base];
-  });
-
-  useEffect(() => {
-    const m = loadMembers(roomId);
-    const who = loadMe();
-    const base = m.length === 0 ? [who] : m;
-    setMembers(base.includes(who) ? base : [who, ...base]);
-  }, [roomId]);
-
-  const persistMembers = (next) => {
-    const unique = Array.from(new Set(next));
-    setMembers(unique);
-    saveMembers(roomId, unique);
-  };
-
-  const [newMember, setNewMember] = useState("");
-  const canAdd = useMemo(() => newMember.trim().length >= 1, [newMember]);
-
-  const addMember = () => {
-    if (!canAdd) return;
-    const name = newMember.trim();
-    if (members.includes(name)) return;
-    persistMembers([...members, name]);
-    setNewMember("");
-    toast(`멤버 "${name}" 추가`);
-  };
-
-  const removeMember = (name) => {
-    const next = members.filter((m) => m !== name);
-    if (next.length === 0) return;
-    persistMembers(next);
-    toast(`멤버 "${name}" 삭제`);
-  };
-
-  const [roomImageUrl, setRoomImageUrl] = useState(() => room?.imageUrl || "");
-  useEffect(() => {
-    setRoomImageUrl(room?.imageUrl || "");
-  }, [room?.imageUrl]);
-
-  const persistRoomImage = (nextUrl) => {
-    const rooms = loadRooms();
-    const nextRooms = rooms.map((r) =>
-      String(r.id) === String(roomId) ? { ...r, imageUrl: nextUrl } : r,
-    );
-    saveRooms(nextRooms);
-    setRoomImageUrl(nextUrl);
-    toast(nextUrl ? "그룹 이미지 저장됨" : "그룹 이미지 삭제됨");
+  const persistRoomImage = async (nextUrl) => {
+    try {
+      if (nextUrl) {
+        // base64 data URL을 Blob으로 변환하여 업로드
+        const response = await fetch(nextUrl);
+        const blob = await response.blob();
+        await uploadGroupImage(Number(roomId), blob);
+        setRoomImageUrl(nextUrl);
+        toast("그룹 이미지 저장됨");
+      } else {
+        // 이미지 삭제
+        await deleteGroupImage(Number(roomId));
+        setRoomImageUrl("");
+        toast("그룹 이미지 삭제됨");
+      }
+    } catch (e) {
+      console.error("이미지 저장/삭제 실패:", e);
+      toast(e?.message || "이미지 저장/삭제에 실패했습니다.");
+    }
   };
 
   const handlePickRoomImage = async (file) => {
@@ -179,8 +148,9 @@ export default function RoomSettingsPage() {
 
     try {
       const squareJpeg = await cropSquareToJpegDataURL(file, 480, 0.82);
-      persistRoomImage(squareJpeg);
-    } catch {
+      await persistRoomImage(squareJpeg);
+    } catch (e) {
+      console.error("이미지 처리 실패:", e);
       toast("이미지 처리 실패. 다른 파일을 선택해 주세요.");
     }
   };
@@ -192,19 +162,23 @@ export default function RoomSettingsPage() {
     navigate("/login", { replace: true });
   };
 
-  const handleLeaveRoom = () => {
-    const who = loadMe();
+  const handleLeaveRoom = async () => {
     const ok = window.confirm(
       "정말 이 방에서 나갈까요? (내 방 목록에서 제거됩니다)",
     );
     if (!ok) return;
 
-    leaveRoom({ roomId, me: who });
-    toast("방에서 나왔어요");
-    navigate("/rooms", { replace: true });
+    try {
+      await leaveGroup(Number(roomId));
+      toast("방에서 나왔어요");
+      navigate("/rooms", { replace: true });
+    } catch (e) {
+      console.error("방 나가기 실패:", e);
+      toast(e?.message || "방 나가기에 실패했습니다.");
+    }
   };
 
-  if (!room) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-xl px-4 py-8">
@@ -214,7 +188,26 @@ export default function RoomSettingsPage() {
             </CardHeader>
             <CardContent>
               <div className="text-sm text-muted-foreground">
-                방 정보를 찾을 수 없어요.
+                데이터를 불러오는 중...
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !group) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-xl px-4 py-8">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">설정</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm text-muted-foreground">
+                {error || "방 정보를 찾을 수 없어요."}
               </div>
               <div className="mt-4">
                 <Button onClick={() => navigate("/rooms")}>방 목록으로</Button>
@@ -225,6 +218,8 @@ export default function RoomSettingsPage() {
       </div>
     );
   }
+
+  const members = group?.members || [];
 
   return (
     <div className="min-h-screen bg-background">
@@ -328,60 +323,68 @@ export default function RoomSettingsPage() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">내 이름 (더미)</CardTitle>
+            <CardTitle className="text-base">내 정보</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid gap-2">
-              <Label>표시 이름</Label>
-              <div className="flex gap-2">
-                <Input value={me} onChange={(e) => setMe(e.target.value)} />
-                <Button onClick={updateMe}>저장</Button>
+            {currentUser ? (
+              <div className="grid gap-2">
+                <Label>사용자 ID</Label>
+                <div className="text-sm text-muted-foreground">
+                  {currentUser.id}
+                </div>
+                <Label>이름</Label>
+                <div className="text-sm font-medium">
+                  {currentUser.name || currentUser.username || "이름 없음"}
+                </div>
+                {currentUser.email && (
+                  <>
+                    <Label>이메일</Label>
+                    <div className="text-sm text-muted-foreground">
+                      {currentUser.email}
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
+            ) : (
+              <div className="text-sm text-muted-foreground">
+                사용자 정보를 불러올 수 없습니다.
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">멤버 (더미)</CardTitle>
+            <CardTitle className="text-base">멤버</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-2">
-              <Label>멤버 추가</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={newMember}
-                  onChange={(e) => setNewMember(e.target.value)}
-                  placeholder="추가할 멤버 이름"
-                />
-                <Button onClick={addMember} disabled={!canAdd}>
-                  추가
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid gap-2">
               <Label>멤버 목록</Label>
               <div className="grid gap-2">
-                {members.map((m) => (
-                  <div
-                    key={m}
-                    className="flex items-center justify-between rounded-lg border px-3 py-2"
-                  >
-                    <span className="text-sm font-medium">
-                      {m} {m === loadMe() ? "(나)" : ""}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeMember(m)}
-                      disabled={members.length <= 1}
-                    >
-                      삭제
-                    </Button>
+                {members.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">
+                    멤버가 없습니다.
                   </div>
-                ))}
+                ) : (
+                  members.map((m) => (
+                    <div
+                      key={m.userId || m.id || m}
+                      className="flex items-center justify-between rounded-lg border px-3 py-2"
+                    >
+                      <span className="text-sm font-medium">
+                        {m.name || m.username || `사용자 ${m.userId || m.id || m}`}
+                        {currentUser &&
+                        (m.userId || m.id) === (currentUser.id || currentUser.userId)
+                          ? " (나)"
+                          : ""}
+                      </span>
+                    </div>
+                  ))
+                )}
               </div>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              * 멤버 추가/삭제는 초대 코드를 통해 진행됩니다.
             </div>
           </CardContent>
         </Card>

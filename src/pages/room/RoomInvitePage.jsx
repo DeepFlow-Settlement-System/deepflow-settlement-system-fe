@@ -3,29 +3,47 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-import { ensureInviteCodeForRoom, findRoomById } from "@/storage/rooms";
+import { getGroupDetail, getInviteCode } from "@/api/groups";
 
 export default function RoomInvitePage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
 
-  const [room, setRoom] = useState(null);
+  const [group, setGroup] = useState(null);
+  const [inviteCodeData, setInviteCodeData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    const r = findRoomById(roomId);
-    if (!r) {
-      setRoom(null);
-      return;
-    }
-    const withCode = ensureInviteCodeForRoom(roomId);
-    setRoom(withCode || r);
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError("");
+        const [groupData, inviteData] = await Promise.all([
+          getGroupDetail(Number(roomId)),
+          getInviteCode(Number(roomId)),
+        ]);
+        setGroup(groupData);
+        setInviteCodeData(inviteData);
+      } catch (e) {
+        console.error("데이터 조회 실패:", e);
+        setError(e?.message || "데이터를 불러오는데 실패했습니다.");
+        setGroup(null);
+        setInviteCodeData(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
   }, [roomId]);
 
   const inviteCode = useMemo(() => {
-    return room?.inviteCode ? String(room.inviteCode).toUpperCase() : "";
-  }, [room]);
+    return inviteCodeData?.code
+      ? String(inviteCodeData.code).toUpperCase()
+      : "";
+  }, [inviteCodeData]);
 
   const copyInviteCode = async () => {
     if (!inviteCode) return;
@@ -41,7 +59,7 @@ export default function RoomInvitePage() {
     }
   };
 
-  if (!room) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-xl px-4 py-8">
@@ -51,7 +69,26 @@ export default function RoomInvitePage() {
             </CardHeader>
             <CardContent>
               <div className="text-sm text-muted-foreground">
-                방 정보를 찾을 수 없어요.
+                데이터를 불러오는 중...
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !group) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-xl px-4 py-8">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">친구 초대</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm text-muted-foreground">
+                {error || "방 정보를 찾을 수 없어요."}
               </div>
               <div className="mt-4">
                 <Button onClick={() => navigate("/rooms")}>방 목록으로</Button>
