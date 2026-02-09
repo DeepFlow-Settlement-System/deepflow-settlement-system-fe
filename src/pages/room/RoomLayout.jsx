@@ -3,18 +3,19 @@ import { NavLink, Outlet, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
+import { getGroupDetail } from "@/api/groups";
 
-const ROOMS_KEY = "rooms_v2";
+const GROUP_IMAGES_KEY = "group_images_v1";
 
-function loadRooms() {
+function loadGroupImage(groupId) {
   try {
-    const raw = localStorage.getItem(ROOMS_KEY);
-    if (!raw) return [];
+    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed[groupId] || null;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -22,13 +23,28 @@ export default function RoomLayout() {
   const { roomId } = useParams();
   const base = `/rooms/${roomId}`;
 
-  const room = useMemo(() => {
-    const rooms = loadRooms();
-    return rooms.find((r) => String(r.id) === String(roomId)) || null;
+  const [group, setGroup] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchGroup = async () => {
+      try {
+        setLoading(true);
+        const data = await getGroupDetail(Number(roomId));
+        setGroup(data);
+      } catch (e) {
+        console.error("그룹 정보 조회 실패:", e);
+        setGroup(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGroup();
   }, [roomId]);
 
-  const imageUrl = room?.imageUrl || "";
-  const roomName = room?.name || "";
+  const imageUrl = loadGroupImage(roomId) || "";
+  const roomName = group?.name || "";
 
   const linkCls = ({ isActive }) =>
     isActive

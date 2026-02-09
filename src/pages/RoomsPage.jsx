@@ -252,7 +252,7 @@ export default function RoomsPage() {
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-3xl px-4 py-8">
         {/* 디버그 표시(원하면 삭제 가능) */}
-        <div className="text-red-500 font-bold">ROOMS UPDATED ✅</div>
+        <div className="text-red-500 font-bold">ROOMS UPDATED!</div>
 
         <div className="flex items-center justify-between gap-3 mt-3">
           <div>
@@ -353,17 +353,17 @@ export default function RoomsPage() {
                       />
                     </div>
 
-                      <div className="grid gap-2">
-                        <Label className="text-xs text-muted-foreground">
-                          종료
-                        </Label>
-                        <Input
-                          type="date"
-                          value={endDate}
-                          onChange={(e) => setEndDate(e.target.value)}
-                        />
-                      </div>
+                    <div className="grid gap-2">
+                      <Label className="text-xs text-muted-foreground">
+                        종료
+                      </Label>
+                      <Input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
                     </div>
+                  </div>
 
                   {startDate > endDate && (
                     <p className="text-sm font-medium text-destructive">
@@ -393,6 +393,7 @@ export default function RoomsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+        </div>
         </div>
 
         {/* 에러 메시지 */}

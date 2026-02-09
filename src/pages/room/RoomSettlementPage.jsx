@@ -1,5 +1,5 @@
 // src/pages/room/RoomSettlementPage.jsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { SETTLEMENT_STATUS } from "@/constants/settlement";
@@ -15,40 +15,12 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-
-const EXPENSES_KEY_V2 = (roomId) => `expenses_v2_${roomId}`;
-const EXPENSES_KEY_V1 = (roomId) => `expenses_v1_${roomId}`;
-const ME_KEY = "user_name_v1";
+import { getExpenses } from "@/api/expenses";
+import { getMe } from "@/api/users";
+import { getGroupDetail } from "@/api/groups";
 
 // ✅ room별 상태 저장
 const STATUS_KEY = (roomId) => `settlement_status_v1_${roomId}`;
-
-// 혼합정산 item mode
-const ITEM_MODE = {
-  PER_PERSON: "PER_PERSON",
-  SHARED_SPLIT: "SHARED_SPLIT",
-};
-
-function loadMe() {
-  return localStorage.getItem(ME_KEY) || "현서";
-}
-
-function safeParseArray(raw) {
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function loadExpenses(roomId) {
-  const raw2 = localStorage.getItem(EXPENSES_KEY_V2(roomId));
-  const raw1 = localStorage.getItem(EXPENSES_KEY_V1(roomId));
-  const a2 = raw2 ? safeParseArray(raw2) : [];
-  const a1 = raw1 ? safeParseArray(raw1) : [];
-  return [...a2, ...a1];
-}
 
 function loadStatusMap(roomId) {
   try {
@@ -72,63 +44,136 @@ function addTransfer(map, from, to, amount) {
   map.set(key, (map.get(key) || 0) + amount);
 }
 
-function computeTransfers(expenses) {
+function computeTransfers(expenses, userIdToNameMap) {
   const transfers = new Map();
 
   for (const e of expenses) {
-    const payer = e.payerName || e.payer || "미정";
-    const items = Array.isArray(e.items) ? e.items : [];
+    const payerUserId = e.payerUserId || e.payer?.userId || e.payer;
+    const payerName =
+      userIdToNameMap[payerUserId] || `사용자 ${payerUserId}` || "미정";
 
-    // ✅ v2(혼합정산): items 기반 계산
-    if (items.length > 0) {
-      for (const it of items) {
-        const users = Array.isArray(it.users) ? it.users : [];
-        if (users.length === 0) continue;
+    // API 응답 형식: settlementType이 "ITEMIZED"면 items 사용, "N_BBANG"이면 participants 사용
+    if (e.settlementType === "ITEMIZED" && Array.isArray(e.items)) {
+      // 품목별 정산
+      for (const it of e.items) {
+        const itemParticipants = Array.isArray(it.participants)
+          ? it.participants
+          : [];
+        if (itemParticipants.length === 0) continue;
 
-        if (it.mode === ITEM_MODE.SHARED_SPLIT) {
-          const total = Number(it.totalPrice) || 0;
-          const share = users.length > 0 ? total / users.length : 0;
-          for (const u of users) {
-            if (u !== payer)
-              addTransfer(transfers, u, payer, Math.round(share));
-          }
-        } else {
-          const unit = Number(it.unitPrice) || 0;
-          for (const u of users) {
-            if (u !== payer) addTransfer(transfers, u, payer, unit);
-          }
+        const itemTotal = Number(it.totalPrice || it.price || 0);
+        const share =
+          itemParticipants.length > 0
+            ? Math.round(itemTotal / itemParticipants.length)
+            : 0;
+
+        for (const p of itemParticipants) {
+          const participantUserId = p.userId || p;
+          if (participantUserId === payerUserId) continue;
+          const participantName =
+            userIdToNameMap[participantUserId] ||
+            `사용자 ${participantUserId}`;
+          addTransfer(transfers, participantUserId, payerUserId, share);
         }
       }
-      continue;
-    }
-
-    // ✅ fallback(v1): amount + participants로 n빵
-    const total = Number(e.amount) || 0;
-    const participants =
-      Array.isArray(e.participants) && e.participants.length > 0
+    } else {
+      // N빵 정산
+      const total = Number(e.totalAmount || e.amount || 0);
+      const participants = Array.isArray(e.participants)
         ? e.participants
-        : [payer];
+        : payerUserId
+          ? [{ userId: payerUserId }]
+          : [];
 
-    const share = participants.length > 0 ? total / participants.length : 0;
-    for (const u of participants) {
-      if (u !== payer) addTransfer(transfers, u, payer, Math.round(share));
+      if (participants.length === 0) continue;
+
+      const share = Math.round(total / participants.length);
+
+      for (const p of participants) {
+        const participantUserId = p.userId || p;
+        if (participantUserId === payerUserId) continue;
+        const participantName =
+          userIdToNameMap[participantUserId] || `사용자 ${participantUserId}`;
+        addTransfer(transfers, participantUserId, payerUserId, share);
+      }
     }
   }
 
   return Array.from(transfers.entries())
     .map(([key, amount]) => {
       const [from, to] = key.split("->");
-      return { id: key, from, to, amount: Math.round(amount) };
+      const fromName = userIdToNameMap[from] || `사용자 ${from}`;
+      const toName = userIdToNameMap[to] || `사용자 ${to}`;
+      return {
+        id: key,
+        from: from,
+        to: to,
+        fromName,
+        toName,
+        amount: Math.round(amount),
+      };
     })
     .sort((a, b) => b.amount - a.amount);
 }
 
 export default function RoomSettlementPage() {
   const { roomId } = useParams();
-  const me = loadMe();
 
-  const expenses = useMemo(() => loadExpenses(roomId), [roomId]);
-  const baseTransfers = useMemo(() => computeTransfers(expenses), [expenses]);
+  const [expenses, setExpenses] = useState([]);
+  const [group, setGroup] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError("");
+        const [expensesData, groupData, userData] = await Promise.all([
+          getExpenses(Number(roomId)),
+          getGroupDetail(Number(roomId)).catch(() => null),
+          getMe().catch(() => null),
+        ]);
+        setExpenses(expensesData?.expenses || []);
+        setGroup(groupData);
+        setCurrentUser(userData);
+      } catch (e) {
+        console.error("데이터 조회 실패:", e);
+        setError(e?.message || "데이터를 불러오는데 실패했습니다.");
+        setExpenses([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [roomId]);
+
+  // 사용자 ID -> 이름 매핑 생성
+  const userIdToNameMap = useMemo(() => {
+    const map = {};
+    if (group?.members) {
+      for (const member of group.members) {
+        const userId = member.userId || member.id;
+        const name = member.name || member.username || `사용자 ${userId}`;
+        map[userId] = name;
+      }
+    }
+    if (currentUser) {
+      const userId = currentUser.id || currentUser.userId;
+      const name = currentUser.name || currentUser.username || `사용자 ${userId}`;
+      map[userId] = name;
+    }
+    return map;
+  }, [group, currentUser]);
+
+  const currentUserId = currentUser?.id || currentUser?.userId;
+
+  const baseTransfers = useMemo(
+    () => computeTransfers(expenses, userIdToNameMap),
+    [expenses, userIdToNameMap],
+  );
 
   // ✅ 상태 맵
   const [statusMap, setStatusMap] = useState(() => loadStatusMap(roomId));
@@ -148,28 +193,32 @@ export default function RoomSettlementPage() {
   // 내가 관련된 것만 보기 / 전체 보기
   const [showAll, setShowAll] = useState(false);
   const myTransfers = useMemo(
-    () => transfers.filter((t) => t.from === me || t.to === me),
-    [transfers, me],
+    () =>
+      transfers.filter(
+        (t) => t.from === currentUserId || t.to === currentUserId,
+      ),
+    [transfers, currentUserId],
   );
   const shown = showAll ? transfers : myTransfers;
 
-  // ✅ "요청 가능한 것" = 내가 받을 돈(to === me) 이고 READY인 것
+  // ✅ "요청 가능한 것" = 내가 받을 돈(to === currentUserId) 이고 READY인 것
   const requestables = useMemo(() => {
     return transfers.filter(
-      (t) => t.to === me && t.status === SETTLEMENT_STATUS.READY,
+      (t) =>
+        t.to === currentUserId && t.status === SETTLEMENT_STATUS.READY,
     );
-  }, [transfers, me]);
+  }, [transfers, currentUserId]);
 
   // 내 기준 요약
   const summary = useMemo(() => {
     let send = 0;
     let recv = 0;
     for (const t of myTransfers) {
-      if (t.from === me) send += t.amount;
-      if (t.to === me) recv += t.amount;
+      if (t.from === currentUserId) send += t.amount;
+      if (t.to === currentUserId) recv += t.amount;
     }
     return { send, recv };
-  }, [myTransfers, me]);
+  }, [myTransfers, currentUserId]);
 
   // ✅ 전체 요청 팝업
   const [openBulk, setOpenBulk] = useState(false);
@@ -207,6 +256,30 @@ export default function RoomSettlementPage() {
     setOpenBulk(false);
   };
 
+  if (loading) {
+    return (
+      <div className="p-4 space-y-4">
+        <div className="text-sm text-muted-foreground">
+          데이터를 불러오는 중...
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 space-y-4">
+        <div className="text-sm text-destructive">{error}</div>
+      </div>
+    );
+  }
+
+  const currentUserName =
+    currentUser?.name ||
+    currentUser?.username ||
+    userIdToNameMap[currentUserId] ||
+    "사용자";
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -219,7 +292,7 @@ export default function RoomSettlementPage() {
 
       <Card className="p-4 space-y-2">
         <div className="text-sm text-muted-foreground">
-          기준 사용자: <b className="text-foreground">{me}</b>
+          기준 사용자: <b className="text-foreground">{currentUserName}</b>
         </div>
 
         <div className="flex gap-4 flex-wrap text-sm">
@@ -255,12 +328,17 @@ export default function RoomSettlementPage() {
       ) : (
         <div className="grid gap-3">
           {shown.map((t) => {
-            const canRequest = t.to === me;
+            const canRequest = t.to === currentUserId;
+            const displayItem = {
+              ...t,
+              from: t.fromName || `사용자 ${t.from}`,
+              to: t.toName || `사용자 ${t.to}`,
+            };
 
             return (
               <TransferRow
                 key={t.id}
-                item={t}
+                item={displayItem}
                 canRequest={canRequest}
                 onRequest={onRequestOne}
                 onResend={onResendOne}
@@ -296,7 +374,7 @@ export default function RoomSettlementPage() {
                     className="p-3 flex items-center justify-between"
                   >
                     <div className="text-sm">
-                      <b>{t.from}</b> (나에게 보내야 함)
+                      <b>{t.fromName || `사용자 ${t.from}`}</b> (나에게 보내야 함)
                     </div>
                     <div className="text-sm font-semibold">
                       {t.amount.toLocaleString()}원
