@@ -1,5 +1,5 @@
 // src/pages/RoomsPage.jsx
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -14,23 +14,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { getGroups, createGroup } from "@/api/groups";
 
-const STORAGE_KEY = "rooms_v2";
-
-function loadRooms() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRooms(rooms) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms));
-}
+const GROUP_IMAGES_KEY = "group_images_v1";
+const GROUP_SCHEDULES_KEY = "group_schedules_v1";
 
 function toDateKey(date) {
   const d = new Date(date);
@@ -38,6 +25,50 @@ function toDateKey(date) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
+}
+
+function loadGroupImage(groupId) {
+  try {
+    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed[groupId] || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveGroupImage(groupId, imageUrl) {
+  try {
+    const raw = localStorage.getItem(GROUP_IMAGES_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    parsed[groupId] = imageUrl;
+    localStorage.setItem(GROUP_IMAGES_KEY, JSON.stringify(parsed));
+  } catch {
+    // ignore
+  }
+}
+
+function loadGroupSchedule(groupId) {
+  try {
+    const raw = localStorage.getItem(GROUP_SCHEDULES_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed[groupId] || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveGroupSchedule(groupId, schedule) {
+  try {
+    const raw = localStorage.getItem(GROUP_SCHEDULES_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    parsed[groupId] = schedule;
+    localStorage.setItem(GROUP_SCHEDULES_KEY, JSON.stringify(parsed));
+  } catch {
+    // ignore
+  }
 }
 
 function readFileAsDataURL(file) {
@@ -50,7 +81,7 @@ function readFileAsDataURL(file) {
 }
 
 /**
- * ✅ 정사각형 센터 크롭 + 리사이즈 + JPEG 압축
+ * 정사각형 센터 크롭 + 리사이즈 + JPEG 압축
  * - size: 최종 정사각형 한 변 px
  * - quality: 0~1 (jpeg)
  */
@@ -85,31 +116,61 @@ async function cropSquareToJpegDataURL(file, size = 480, quality = 0.82) {
 export default function RoomsPage() {
   const navigate = useNavigate();
 
-  const [rooms, setRooms] = useState(() => loadRooms());
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
 
-  const [roomName, setRoomName] = useState("");
+  const [groupName, setGroupName] = useState("");
+  const [description, setDescription] = useState("");
+  const [groupImageUrl, setGroupImageUrl] = useState("");
   const today = toDateKey(new Date());
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
 
-  // ✅ 그룹 이미지 (정사각형 dataURL)
-  const [roomImageUrl, setRoomImageUrl] = useState("");
-
   const canCreate = useMemo(() => {
     return (
-      roomName.trim().length >= 1 &&
+      groupName.trim().length >= 1 &&
       startDate &&
       endDate &&
       startDate <= endDate
     );
-  }, [roomName, startDate, endDate]);
+  }, [groupName, startDate, endDate]);
+
+  // 그룹 목록 조회
+  useEffect(() => {
+    const fetchGroups = async () => {
+      try {
+        setLoading(true);
+        setError("");
+        const data = await getGroups();
+        const groupsWithLocalData = (Array.isArray(data) ? data : []).map((g) => {
+          const schedule = loadGroupSchedule(g.id);
+          return {
+            ...g,
+            imageUrl: loadGroupImage(g.id), // 로컬에서 이미지 가져오기
+            tripStart: schedule?.tripStart || null,
+            tripEnd: schedule?.tripEnd || null,
+          };
+        });
+        setGroups(groupsWithLocalData);
+      } catch (e) {
+        console.error("그룹 목록 조회 실패:", e);
+        setError(e?.message || "그룹 목록을 불러오는데 실패했습니다.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchGroups();
+  }, []);
 
   const resetForm = () => {
-    setRoomName("");
+    setGroupName("");
+    setDescription("");
+    setGroupImageUrl("");
     setStartDate(today);
     setEndDate(today);
-    setRoomImageUrl("");
   };
 
   const openModal = () => {
@@ -117,35 +178,58 @@ export default function RoomsPage() {
     setOpen(true);
   };
 
-  const goRoom = (roomId) => {
-    navigate(`/rooms/${roomId}/invite`);
+  const goGroup = (groupId) => {
+    navigate(`/rooms/${groupId}/invite`);
   };
 
-  const handleCreateRoom = () => {
+  const handleCreateGroup = async () => {
     if (!canCreate) return;
 
-    const newRoom = {
-      id: String(Date.now()),
-      name: roomName.trim(),
-      tripStart: startDate,
-      tripEnd: endDate,
-      imageUrl: roomImageUrl || "", // ✅ 추가
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      setError("");
 
-    const nextRooms = [newRoom, ...rooms];
-    setRooms(nextRooms);
-    saveRooms(nextRooms);
+      const groupData = {
+        name: groupName.trim(),
+        ...(description.trim() && { description: description.trim() }),
+      };
 
-    setOpen(false);
-    resetForm();
-    navigate(`/rooms/${newRoom.id}/invite`);
+      const newGroup = await createGroup(groupData);
+
+      // 그룹 이미지를 로컬에 저장 (백엔드 미구현)
+      if (groupImageUrl) {
+        saveGroupImage(newGroup.id, groupImageUrl);
+      }
+
+      // 그룹 일정을 로컬에 저장 (백엔드 미구현)
+      saveGroupSchedule(newGroup.id, {
+        tripStart: startDate,
+        tripEnd: endDate,
+      });
+
+      // 새로 생성된 그룹을 목록에 추가
+      setGroups((prev) => [
+        {
+          ...newGroup,
+          imageUrl: groupImageUrl || null,
+          tripStart: startDate,
+          tripEnd: endDate,
+        },
+        ...prev,
+      ]);
+
+      setOpen(false);
+      resetForm();
+      navigate(`/rooms/${newGroup.id}/invite`);
+    } catch (e) {
+      console.error("그룹 생성 실패:", e);
+      setError(e?.message || "그룹 생성에 실패했습니다.");
+    }
   };
 
   const handlePickImage = async (file) => {
     if (!file) return;
 
-    // ✅ 3MB 제한
+    // 3MB 제한
     const maxBytes = 3 * 1024 * 1024;
     if (file.size > maxBytes) {
       alert("이미지 파일은 최대 3MB까지 업로드할 수 있어요.");
@@ -160,7 +244,7 @@ export default function RoomsPage() {
 
     try {
       const squareJpeg = await cropSquareToJpegDataURL(file, 480, 0.82);
-      setRoomImageUrl(squareJpeg);
+      setGroupImageUrl(squareJpeg);
     } catch {
       alert("이미지 처리에 실패했어요. 다른 이미지를 선택해 주세요.");
     }
@@ -190,17 +274,27 @@ export default function RoomsPage() {
 
               <div className="grid gap-4">
                 <div className="grid gap-2">
-                  <Label htmlFor="roomName">방 이름</Label>
+                  <Label htmlFor="groupName">그룹 이름</Label>
                   <Input
-                    id="roomName"
-                    value={roomName}
-                    onChange={(e) => setRoomName(e.target.value)}
+                    id="groupName"
+                    value={groupName}
+                    onChange={(e) => setGroupName(e.target.value)}
                     placeholder="예) 제주도 여행"
                     autoFocus
                   />
                 </div>
 
-                {/* ✅ 그룹 이미지 */}
+                <div className="grid gap-2">
+                  <Label htmlFor="description">설명 (선택)</Label>
+                  <Input
+                    id="description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="그룹에 대한 설명을 입력하세요"
+                  />
+                </div>
+
+                {/* 그룹 이미지 (로컬 저장만) */}
                 <div className="grid gap-2">
                   <Label>그룹 이미지 (정사각형)</Label>
                   <Input
@@ -209,22 +303,23 @@ export default function RoomsPage() {
                     onChange={(e) => handlePickImage(e.target.files?.[0])}
                   />
 
-                  {roomImageUrl ? (
+                  {groupImageUrl ? (
                     <div className="flex items-center gap-3">
                       <img
-                        src={roomImageUrl}
-                        alt="room preview"
+                        src={groupImageUrl}
+                        alt="group preview"
                         className="h-20 w-20 rounded-xl border object-cover"
                       />
                       <div className="grid gap-2">
                         <div className="text-xs text-muted-foreground">
                           * 자동으로 정사각형으로 잘라 저장돼요.
                           <br />* 3MB 이하만 가능
+                          <br />* (백엔드 미구현으로 로컬에만 저장됩니다)
                         </div>
                         <Button
                           type="button"
                           variant="outline"
-                          onClick={() => setRoomImageUrl("")}
+                          onClick={() => setGroupImageUrl("")}
                         >
                           이미지 제거
                         </Button>
@@ -233,10 +328,12 @@ export default function RoomsPage() {
                   ) : (
                     <div className="text-xs text-muted-foreground">
                       * 선택하면 자동으로 정사각형으로 저장돼요 (최대 3MB).
+                      <br />* (백엔드 미구현으로 로컬에만 저장됩니다)
                     </div>
                   )}
                 </div>
 
+                {/* 여행 일정 (로컬 저장만) */}
                 <div className="grid gap-2">
                   <Label>여행 일정</Label>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -268,6 +365,10 @@ export default function RoomsPage() {
                       시작일이 종료일보다 늦을 수 없어요.
                     </p>
                   )}
+
+                  <div className="text-xs text-muted-foreground">
+                    * (백엔드 미구현으로 로컬에만 저장됩니다)
+                  </div>
                 </div>
               </div>
 
@@ -281,7 +382,7 @@ export default function RoomsPage() {
                 >
                   취소
                 </Button>
-                <Button onClick={handleCreateRoom} disabled={!canCreate}>
+                <Button onClick={handleCreateGroup} disabled={!canCreate}>
                   생성
                 </Button>
               </DialogFooter>
@@ -289,29 +390,46 @@ export default function RoomsPage() {
           </Dialog>
         </div>
 
+        {/* 에러 메시지 */}
+        {error && (
+          <Card className="mt-6 border-destructive">
+            <CardContent className="p-4">
+              <div className="text-sm text-destructive">{error}</div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* 리스트 */}
         <div className="mt-6 grid gap-3">
-          {rooms.length === 0 ? (
+          {loading ? (
             <Card>
               <CardContent className="p-6">
                 <div className="text-sm text-muted-foreground">
-                  아직 방이 없습니다. <b>+ 방 만들기</b>로 생성해보세요.
+                  그룹 목록을 불러오는 중...
+                </div>
+              </CardContent>
+            </Card>
+          ) : groups.length === 0 ? (
+            <Card>
+              <CardContent className="p-6">
+                <div className="text-sm text-muted-foreground">
+                  아직 그룹이 없습니다. <b>+ 방 만들기</b>로 생성해보세요.
                 </div>
               </CardContent>
             </Card>
           ) : (
-            rooms.map((r) => (
+            groups.map((g) => (
               <Card
-                key={r.id}
+                key={g.id}
                 className="cursor-pointer transition hover:shadow-sm"
-                onClick={() => goRoom(r.id)}
+                onClick={() => goGroup(g.id)}
               >
                 <CardHeader className="pb-2">
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-xl border bg-muted overflow-hidden">
-                      {r.imageUrl ? (
+                      {g.imageUrl ? (
                         <img
-                          src={r.imageUrl}
+                          src={g.imageUrl}
                           alt=""
                           className="h-full w-full object-cover"
                         />
@@ -321,26 +439,29 @@ export default function RoomsPage() {
                         </div>
                       )}
                     </div>
-                    <CardTitle className="text-base">{r.name}</CardTitle>
+                    <CardTitle className="text-base">{g.name}</CardTitle>
                   </div>
                 </CardHeader>
 
                 <CardContent className="pt-0">
-                  <div className="text-sm text-muted-foreground">
-                    일정: {r.tripStart ?? "?"} ~ {r.tripEnd ?? "?"}
-                  </div>
+                  {g.description && (
+                    <div className="text-sm text-muted-foreground">
+                      {g.description}
+                    </div>
+                  )}
+                  {g.tripStart && g.tripEnd && (
+                    <div className="text-sm text-muted-foreground mt-1">
+                      일정: {g.tripStart} ~ {g.tripEnd}
+                    </div>
+                  )}
                   <div className="mt-1 text-xs text-muted-foreground">
-                    id: {r.id}
+                    ID: {g.id}
                   </div>
                 </CardContent>
               </Card>
             ))
           )}
         </div>
-
-        <p className="mt-6 text-xs text-muted-foreground">
-          (더미) 방 정보는 localStorage에 저장됩니다.
-        </p>
       </div>
     </div>
   );

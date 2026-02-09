@@ -4,29 +4,19 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { getGroupDetail } from "@/api/groups";
+import { getExpenses } from "@/api/expenses";
 
-const ROOMS_KEY = "rooms_v2";
-const EXPENSES_KEY = (roomId) => `expenses_v2_${roomId}`;
+const GROUP_SCHEDULES_KEY = "group_schedules_v1";
 
-function loadRooms() {
+function loadGroupSchedule(groupId) {
   try {
-    const raw = localStorage.getItem(ROOMS_KEY);
-    if (!raw) return [];
+    const raw = localStorage.getItem(GROUP_SCHEDULES_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return parsed[groupId] || null;
   } catch {
-    return [];
-  }
-}
-
-function loadExpenses(roomId) {
-  try {
-    const raw = localStorage.getItem(EXPENSES_KEY(roomId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+    return null;
   }
 }
 
@@ -70,16 +60,8 @@ function buildDateRange(startKey, endKey) {
 }
 
 function calcExpenseTotal(e) {
-  const items = Array.isArray(e.items) ? e.items : [];
-  if (items.length > 0) {
-    return items.reduce((sum, it) => {
-      if (it.mode === "SHARED_SPLIT") return sum + (Number(it.totalPrice) || 0);
-      const unit = Number(it.unitPrice) || 0;
-      const cnt = Array.isArray(it.users) ? it.users.length : 0;
-      return sum + unit * cnt;
-    }, 0);
-  }
-  return Number(e.amount) || 0;
+  // API 응답 형식: totalAmount는 이미 숫자로 제공됨
+  return e.totalAmount || 0;
 }
 
 export default function RoomHomePage() {
@@ -87,15 +69,13 @@ export default function RoomHomePage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [expenses, setExpenses] = useState(() => loadExpenses(roomId));
+  const [group, setGroup] = useState(null);
+  const [expenses, setExpenses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const room = useMemo(() => {
-    const rooms = loadRooms();
-    return rooms.find((r) => String(r.id) === String(roomId)) || null;
-  }, [roomId]);
-
-  const tripStart = room?.tripStart;
-  const tripEnd = room?.tripEnd;
+  const [tripStart, setTripStart] = useState(null);
+  const [tripEnd, setTripEnd] = useState(null);
 
   const dateList = useMemo(
     () => buildDateRange(tripStart, tripEnd),
@@ -103,32 +83,67 @@ export default function RoomHomePage() {
   );
 
   const [viewMode, setViewMode] = useState("LIST");
-  const [selectedDate, setSelectedDate] = useState(() => tripStart || "");
+  const [selectedDate, setSelectedDate] = useState("");
 
+  // 그룹 정보 및 지출 목록 조회
   useEffect(() => {
-    setSelectedDate(tripStart || "");
-  }, [tripStart]);
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError("");
 
-  useEffect(() => {
-    setExpenses(loadExpenses(roomId));
+        const [groupData, expensesData] = await Promise.all([
+          getGroupDetail(Number(roomId)),
+          getExpenses(Number(roomId)),
+        ]);
+
+        setGroup(groupData);
+        setExpenses(expensesData?.expenses || []);
+
+        // 로컬에서 일정 불러오기 (백엔드 미구현)
+        const schedule = loadGroupSchedule(Number(roomId));
+        if (schedule) {
+          setTripStart(schedule.tripStart || null);
+          setTripEnd(schedule.tripEnd || null);
+          if (schedule.tripStart) {
+            setSelectedDate(schedule.tripStart);
+          }
+        }
+      } catch (e) {
+        console.error("데이터 조회 실패:", e);
+        setError(e?.message || "데이터를 불러오는데 실패했습니다.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
   }, [roomId, location.key]);
 
+  useEffect(() => {
+    if (tripStart) {
+      setSelectedDate(tripStart);
+    }
+  }, [tripStart]);
+
+  // 여행 기간 내 지출 필터링
   const inTripRange = useMemo(() => {
     if (!tripStart || !tripEnd) return expenses;
     const s = startOfDay(tripStart);
     const e = endOfDay(tripEnd);
     return expenses.filter((it) => {
-      const dt = new Date(it.date);
+      const dt = new Date(it.spentAt);
       return dt >= s && dt <= e;
     });
   }, [expenses, tripStart, tripEnd]);
 
+  // 선택한 날짜의 지출 필터링
   const inSelectedDay = useMemo(() => {
     if (!selectedDate) return [];
     const s = startOfDay(selectedDate);
     const e = endOfDay(selectedDate);
     return inTripRange.filter((it) => {
-      const dt = new Date(it.date);
+      const dt = new Date(it.spentAt);
       return dt >= s && dt <= e;
     });
   }, [inTripRange, selectedDate]);
@@ -147,17 +162,15 @@ export default function RoomHomePage() {
 
   const ExpenseCard = ({ e }) => {
     const total = calcExpenseTotal(e);
+    const dateStr = e.spentAt ? toDateKey(e.spentAt) : "";
+    const settlementType = e.settlementType === "ITEMIZED" ? "혼합정산(품목/공동)" : "기본";
     return (
       <Card className="hover:shadow-sm transition">
         <CardContent className="p-4 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="font-semibold truncate">{e.title}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              날짜: {e.dateKey ?? toDateKey(e.date)} · 결제자:{" "}
-              {e.payerName || "미정"} ·{" "}
-              {Array.isArray(e.items) && e.items.length > 0
-                ? "혼합정산(품목/공동)"
-                : "기본"}
+              날짜: {dateStr} · 결제자 : {e.payerUserId.nickname} · {settlementType}
             </div>
           </div>
           <div className="font-bold whitespace-nowrap">
@@ -167,6 +180,46 @@ export default function RoomHomePage() {
       </Card>
     );
   };
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardContent className="p-6">
+            <div className="text-sm text-muted-foreground">
+              데이터를 불러오는 중...
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <Card className="border-destructive">
+          <CardContent className="p-6">
+            <div className="text-sm text-destructive">{error}</div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!group) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardContent className="p-6">
+            <div className="text-sm text-muted-foreground">
+              그룹을 찾을 수 없습니다.
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -252,9 +305,9 @@ export default function RoomHomePage() {
         <div className="grid gap-3">
           {inTripRange
             .slice()
-            .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+            .sort((a, b) => (a.spentAt < b.spentAt ? 1 : -1))
             .map((e) => (
-              <ExpenseCard key={e.id} e={e} />
+              <ExpenseCard key={e.expenseId} e={e} />
             ))}
         </div>
       ) : (
@@ -270,18 +323,14 @@ export default function RoomHomePage() {
             <div className="grid gap-3">
               {inSelectedDay
                 .slice()
-                .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+                .sort((a, b) => (a.spentAt < b.spentAt ? 1 : -1))
                 .map((e) => (
-                  <ExpenseCard key={e.id} e={e} />
+                  <ExpenseCard key={e.expenseId} e={e} />
                 ))}
             </div>
           )}
         </div>
       )}
-
-      <p className="text-xs text-muted-foreground">
-        (더미) 홈은 방 생성 시 저장한 여행 기간을 자동 적용합니다.
-      </p>
     </div>
   );
 }

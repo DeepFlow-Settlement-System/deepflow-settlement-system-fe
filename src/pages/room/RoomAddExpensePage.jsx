@@ -1,14 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-
-const EXPENSES_KEY = (roomId) => `expenses_v2_${roomId}`;
-const MEMBERS_KEY = (roomId) => `room_members_v1_${roomId}`;
-const ME_KEY = "user_name_v1";
+import { createExpense } from "@/api/expenses";
+import { uploadReceipt, getOcrStatus, getOcrAnalysis } from "@/api/receipts";
+import { getGroupDetail } from "@/api/groups";
+import { getMe } from "@/api/users";
 
 const SPLIT = {
   EQUAL: "EQUAL",
@@ -20,35 +20,6 @@ const ITEM_MODE = {
   SHARED_SPLIT: "SHARED_SPLIT",
 };
 
-function loadExpenses(roomId) {
-  try {
-    const raw = localStorage.getItem(EXPENSES_KEY(roomId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-function saveExpenses(roomId, expenses) {
-  localStorage.setItem(EXPENSES_KEY(roomId), JSON.stringify(expenses));
-}
-
-function loadMembers(roomId) {
-  try {
-    const raw = localStorage.getItem(MEMBERS_KEY(roomId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function loadMe() {
-  return localStorage.getItem(ME_KEY) || "현서";
-}
-
 function toDateKey(date) {
   const d = new Date(date);
   const y = d.getFullYear();
@@ -57,35 +28,14 @@ function toDateKey(date) {
   return `${y}-${m}-${dd}`;
 }
 
-function newItem(members, patch = {}) {
+function newItem(memberUserIds, patch = {}) {
   return {
     id: String(Date.now()) + Math.random().toString(16).slice(2),
-    title: "",
+    itemName: "",
     mode: ITEM_MODE.PER_PERSON,
-    unitPrice: "",
-    totalPrice: "",
-    users: members.length ? [members[0]] : [],
+    price: "",
+    itemParticipants: memberUserIds.length ? [{ userId: memberUserIds[0] }] : [],
     ...patch,
-  };
-}
-
-/**
- * ✅ UI 개발용 더미 OCR 결과
- * 나중에 API 붙이면 여기만 교체하면 됨:
- *   const data = await ocrReceipt(file)
- */
-async function fakeOcr(_file) {
-  await new Promise((r) => setTimeout(r, 900));
-  return {
-    merchant: "카페(더미)",
-    paidAt: new Date().toISOString(),
-    total: 24500,
-    items: [
-      { name: "아메리카노", price: 4500, qty: 2 },
-      { name: "라떼", price: 5000, qty: 2 },
-      { name: "케이크", price: 10500, qty: 1 },
-    ],
-    rawText: "(더미 OCR 텍스트)",
   };
 }
 
@@ -93,30 +43,74 @@ export default function RoomAddExpensePage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
 
-  const members = useMemo(() => {
-    const m = loadMembers(roomId);
-    if (m.length === 0) return [loadMe()];
-    return m;
-  }, [roomId]);
+  const [group, setGroup] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => toDateKey(new Date()));
-  const [payerName, setPayerName] = useState(() => loadMe());
+  const [payerUserId, setPayerUserId] = useState(null);
 
   const [splitType, setSplitType] = useState(SPLIT.ITEM);
 
-  // 전체 n빵
-  const [amount, setAmount] = useState("");
-  const [participants, setParticipants] = useState(() => members);
+  // 사용자 정보 및 그룹 정보 조회
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const [userData, groupData] = await Promise.all([
+          getMe(),
+          getGroupDetail(Number(roomId)),
+        ]);
 
-  const toggleParticipant = (name) => {
+        const userId = userData?.id || userData?.userId || null;
+        setCurrentUserId(userId);
+
+        setGroup(groupData);
+        // 멤버는 userId 배열로 변환
+        const memberUserIds = (groupData.members || []).map((m) => m.userId);
+        setMembers(memberUserIds);
+
+        // payerUserId 설정: 현재 사용자 ID가 멤버에 있으면 그것을, 없으면 첫 번째 멤버
+        if (userId && memberUserIds.includes(userId)) {
+          setPayerUserId(userId);
+        } else if (memberUserIds.length > 0) {
+          setPayerUserId(memberUserIds[0]);
+        }
+
+        // participants 초기값 설정 (전체 멤버)
+        setParticipants(memberUserIds);
+      } catch (e) {
+        console.error("데이터 조회 실패:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [roomId]);
+
+  // 전체 1/N
+  const [amount, setAmount] = useState("");
+  const [participants, setParticipants] = useState([]);
+
+  const toggleParticipant = (userId) => {
     setParticipants((prev) =>
-      prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name],
+      prev.includes(userId) ? prev.filter((x) => x !== userId) : [...prev, userId],
     );
   };
 
   // 혼합정산(품목)
-  const [items, setItems] = useState(() => [newItem(members)]);
+  const [items, setItems] = useState(() => [newItem([])]);
+  
+  // members가 로드되면 items 초기화
+  useEffect(() => {
+    if (members.length > 0 && items.length === 1 && !items[0].itemName && !items[0].price) {
+      setItems([newItem(members)]);
+    }
+  }, [members]);
+
   const addItem = () => setItems((prev) => [...prev, newItem(members)]);
   const removeItem = (id) =>
     setItems((prev) => prev.filter((it) => it.id !== id));
@@ -127,25 +121,26 @@ export default function RoomAddExpensePage() {
     );
   };
 
-  const toggleItemUser = (itemId, user) => {
+  const toggleItemUser = (itemId, userId) => {
     setItems((prev) =>
       prev.map((it) => {
         if (it.id !== itemId) return it;
-        const users = Array.isArray(it.users) ? it.users : [];
-        const nextUsers = users.includes(user)
-          ? users.filter((u) => u !== user)
-          : [...users, user];
-        return { ...it, users: nextUsers };
+        const participants = Array.isArray(it.itemParticipants) ? it.itemParticipants : [];
+        const exists = participants.some((p) => p.userId === userId);
+        const nextParticipants = exists
+          ? participants.filter((p) => p.userId !== userId)
+          : [...participants, { userId }];
+        return { ...it, itemParticipants: nextParticipants };
       }),
     );
   };
 
   const totalItemsAmount = useMemo(() => {
     return items.reduce((sum, it) => {
-      const users = Array.isArray(it.users) ? it.users.length : 0;
+      const participantCount = Array.isArray(it.itemParticipants) ? it.itemParticipants.length : 0;
       if (it.mode === ITEM_MODE.SHARED_SPLIT)
-        return sum + (Number(it.totalPrice) || 0);
-      return sum + (Number(it.unitPrice) || 0) * users;
+        return sum + (Number(it.price) || 0);
+      return sum + (Number(it.price) || 0) * participantCount;
     }, 0);
   }, [items]);
 
@@ -160,63 +155,60 @@ export default function RoomAddExpensePage() {
 
     if (!items || items.length === 0) return false;
     for (const it of items) {
-      if ((it.title || "").trim().length === 0) return false;
-      if (!Array.isArray(it.users) || it.users.length === 0) return false;
-
-      if (it.mode === ITEM_MODE.SHARED_SPLIT) {
-        if (!(Number(it.totalPrice) > 0)) return false;
-      } else {
-        if (!(Number(it.unitPrice) > 0)) return false;
-      }
+      if ((it.itemName || "").trim().length === 0) return false;
+      if (!Array.isArray(it.itemParticipants) || it.itemParticipants.length === 0) return false;
+      if (!(Number(it.price) > 0)) return false;
     }
     return totalItemsAmount > 0;
   }, [title, splitType, amount, participants, items, totalItemsAmount]);
 
-  const handleSave = () => {
-    if (!canSave) return;
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [receiptId, setReceiptId] = useState(null);
 
-    const prev = loadExpenses(roomId);
+  const handleSave = async () => {
+    if (!canSave || saving) return;
 
-    const base = {
-      id: String(Date.now()),
-      title: title.trim(),
-      payerName,
-      date: new Date(date).toISOString(),
-      dateKey: date,
-      createdAt: new Date().toISOString(),
-      splitType,
-    };
+    try {
+      setSaving(true);
+      setSaveError("");
 
-    const expense =
-      splitType === SPLIT.EQUAL
-        ? {
-            ...base,
-            amount: Number(amount),
-            participants: participants.slice(),
-            items: [],
-          }
-        : {
-            ...base,
-            amount: totalItemsAmount,
-            participants: [],
-            items: items.map((it) => ({
-              id: it.id,
-              title: (it.title || "").trim(),
-              mode: it.mode,
-              unitPrice:
-                it.mode === ITEM_MODE.PER_PERSON
-                  ? Number(it.unitPrice) || 0
-                  : undefined,
-              totalPrice:
-                it.mode === ITEM_MODE.SHARED_SPLIT
-                  ? Number(it.totalPrice) || 0
-                  : undefined,
-              users: Array.isArray(it.users) ? it.users.slice() : [],
-            })),
-          };
+      // 날짜를 ISO 8601 형식으로 변환 (예: "2026-02-01T12:00:00")
+      const dateTime = new Date(date);
+      dateTime.setHours(12, 0, 0, 0);
+      const spentAt = dateTime.toISOString().slice(0, 19);
 
-    saveExpenses(roomId, [expense, ...prev]);
-    navigate(`/rooms/${roomId}`);
+      const expenseData = {
+        title: title.trim(),
+        spentAt,
+        payerUserId,
+        settlementType: splitType === SPLIT.EQUAL ? "N_BBANG" : "ITEMIZED",
+        totalAmount: String(
+          splitType === SPLIT.EQUAL
+            ? Number(amount)
+            : totalItemsAmount
+        ),
+        participants: participants.map((userId) => ({ userId })),
+        ...(splitType === SPLIT.ITEM && {
+          items: items.map((it) => ({
+            itemName: (it.itemName || "").trim(),
+            price: String(Number(it.price) || 0),
+            itemParticipants: Array.isArray(it.itemParticipants)
+              ? it.itemParticipants
+              : [],
+          })),
+        }),
+        ...(receiptId && { receiptImageId: receiptId }),
+      };
+
+      await createExpense(Number(roomId), expenseData);
+      navigate(`/rooms/${roomId}`);
+    } catch (e) {
+      console.error("지출 저장 실패:", e);
+      setSaveError(e?.message || "지출 저장에 실패했습니다.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ---------- OCR UI only ----------
@@ -241,10 +233,37 @@ export default function RoomAddExpensePage() {
     setOcrStatus("RUNNING");
     setOcrError("");
     try {
-      // ✅ 나중에 API 붙이면 여기만 교체
-      const data = await fakeOcr(receiptFile);
-      setOcrResult(data);
-      setOcrStatus("DONE");
+      // 1. 영수증 업로드
+      const uploadRes = await uploadReceipt(receiptFile);
+      const receiptIdValue = uploadRes.receiptId;
+      setReceiptId(receiptIdValue);
+
+      // 2. OCR 상태 확인 (폴링)
+      let status = "PENDING";
+      let attempts = 0;
+      const maxAttempts = 30; // 최대 30초 대기
+
+      while (status === "PENDING" && attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // 1초 대기
+        const statusRes = await getOcrStatus(receiptIdValue);
+        status = statusRes.ocrStatus;
+        attempts++;
+
+        if (status === "SUCCESS") {
+          // 3. OCR 결과 조회
+          const analysisRes = await getOcrAnalysis(receiptIdValue);
+          // OCR 결과 파싱 (ReceiptOcrResult 형식에 맞게 변환 필요)
+          setOcrResult(analysisRes);
+          setOcrStatus("DONE");
+          return;
+        } else if (status === "FAILED") {
+          throw new Error("OCR 처리에 실패했습니다.");
+        }
+      }
+
+      if (status === "PENDING") {
+        throw new Error("OCR 처리 시간이 초과되었습니다.");
+      }
     } catch (e) {
       setOcrStatus("ERROR");
       setOcrError(e?.message || "OCR 실패");
@@ -254,50 +273,77 @@ export default function RoomAddExpensePage() {
   const applyOcrToForm = () => {
     if (!ocrResult) return;
 
-    // 제목/날짜/총액 자동 채움 (비어있을 때만)
-    if (!title.trim()) {
-      setTitle(
-        ocrResult.merchant ? `${ocrResult.merchant} 영수증` : "영수증 지출",
-      );
-    }
+    // OCR 결과 파싱 (ReceiptOcrResult 형식에 맞게 변환 필요)
+    // TODO: 실제 OCR 결과 형식에 맞게 파싱 로직 구현
+    // 일단 기본 구조만 유지
+    try {
+      const receiptData = typeof ocrResult === "string" ? JSON.parse(ocrResult) : ocrResult;
+      const storeInfo = receiptData?.images?.[0]?.receipt?.result?.storeInfo;
+      const items = receiptData?.images?.[0]?.receipt?.result?.subResults?.[0]?.items || [];
+      const totalPrice = receiptData?.images?.[0]?.receipt?.result?.totalPrice?.price?.formatted;
 
-    if (ocrResult.paidAt) {
-      try {
-        setDate(toDateKey(new Date(ocrResult.paidAt)));
-      } catch {}
-    }
+      if (storeInfo?.name?.formatted?.value && !title.trim()) {
+        setTitle(`${storeInfo.name.formatted.value} 영수증`);
+      }
 
-    if (typeof ocrResult.total === "number" && ocrResult.total > 0) {
-      setAmount(String(ocrResult.total));
-    }
+      if (totalPrice) {
+        const total = Number(totalPrice.replace(/,/g, ""));
+        if (total > 0) {
+          setAmount(String(total));
+        }
+      }
 
-    const arr = Array.isArray(ocrResult.items) ? ocrResult.items : [];
-    if (arr.length > 0) {
-      setSplitType(SPLIT.ITEM);
-      setItems((prev) => {
-        const mapped = arr.slice(0, 15).map((it) =>
-          newItem(members, {
-            title: String(it.name || "").trim() || "품목",
-            mode: ITEM_MODE.PER_PERSON,
-            unitPrice: String(Number(it.price) || 0),
-            users: members.slice(), // MVP: 일단 전원 체크 -> 사용자가 수정
-          }),
-        );
+      if (items.length > 0) {
+        setSplitType(SPLIT.ITEM);
+        setItems((prev) => {
+          const mapped = items.slice(0, 15).map((it) =>
+            newItem(members, {
+              itemName: String(it.name?.formatted?.value || "").trim() || "품목",
+              mode: ITEM_MODE.PER_PERSON,
+              price: String(Number(it.price?.price?.formatted?.replace(/,/g, "") || 0)),
+              itemParticipants: members.map((userId) => ({ userId })),
+            }),
+          );
 
-        const first = prev[0];
-        const isFirstEmpty =
-          prev.length === 1 &&
-          !first?.title?.trim() &&
-          !String(first?.unitPrice || "").trim() &&
-          !String(first?.totalPrice || "").trim();
+          const first = prev[0];
+          const isFirstEmpty =
+            prev.length === 1 &&
+            !first?.itemName?.trim() &&
+            !String(first?.price || "").trim();
 
-        return isFirstEmpty ? mapped : [...mapped, ...prev];
-      });
+          return isFirstEmpty ? mapped : [...mapped, ...prev];
+        });
+      }
+    } catch (e) {
+      console.error("OCR 결과 파싱 실패:", e);
     }
   };
 
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardContent className="p-6">
+            <div className="text-sm text-muted-foreground">
+              그룹 정보를 불러오는 중...
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      {/* 에러 메시지 */}
+      {saveError && (
+        <Card className="border-destructive">
+          <CardContent className="p-4">
+            <div className="text-sm text-destructive">{saveError}</div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* OCR UI */}
       <Card>
         <CardHeader className="pb-3">
@@ -311,9 +357,6 @@ export default function RoomAddExpensePage() {
               accept="image/*"
               onChange={(e) => onPickReceipt(e.target.files?.[0])}
             />
-            <p className="text-xs text-muted-foreground">
-              지금은 UI만 준비해두고, 나중에 OCR API만 연결합니다.
-            </p>
           </div>
 
           {receiptUrl && (
@@ -436,13 +479,13 @@ export default function RoomAddExpensePage() {
             <div className="grid gap-2">
               <Label>결제자</Label>
               <select
-                value={payerName}
-                onChange={(e) => setPayerName(e.target.value)}
+                value={payerUserId}
+                onChange={(e) => setPayerUserId(Number(e.target.value))}
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
               >
-                {members.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                {members.map((userId) => (
+                  <option key={userId} value={userId}>
+                    사용자 {userId}
                   </option>
                 ))}
               </select>
@@ -487,16 +530,16 @@ export default function RoomAddExpensePage() {
             <div className="grid gap-2">
               <Label>참여자</Label>
               <div className="grid gap-2 rounded-lg border p-3">
-                {members.map((m) => (
+                {members.map((userId) => (
                   <label
-                    key={m}
+                    key={userId}
                     className="flex items-center justify-between text-sm"
                   >
-                    <span>{m}</span>
+                    <span>사용자 {userId}</span>
                     <input
                       type="checkbox"
-                      checked={participants.includes(m)}
-                      onChange={() => toggleParticipant(m)}
+                      checked={participants.includes(userId)}
+                      onChange={() => toggleParticipant(userId)}
                     />
                   </label>
                 ))}
@@ -527,11 +570,10 @@ export default function RoomAddExpensePage() {
 
             <div className="grid gap-3">
               {items.map((it, idx) => {
-                const cnt = Array.isArray(it.users) ? it.users.length : 0;
-                const unit = Number(it.unitPrice) || 0;
-                const total = Number(it.totalPrice) || 0;
+                const cnt = Array.isArray(it.itemParticipants) ? it.itemParticipants.length : 0;
+                const price = Number(it.price) || 0;
                 const lineTotal =
-                  it.mode === ITEM_MODE.SHARED_SPLIT ? total : unit * cnt;
+                  it.mode === ITEM_MODE.SHARED_SPLIT ? price : price * cnt;
 
                 return (
                   <Card key={it.id} className="border-dashed">
@@ -551,9 +593,9 @@ export default function RoomAddExpensePage() {
                       <div className="grid gap-2">
                         <Label>품목명</Label>
                         <Input
-                          value={it.title}
+                          value={it.itemName}
                           onChange={(e) =>
-                            updateItem(it.id, { title: e.target.value })
+                            updateItem(it.id, { itemName: e.target.value })
                           }
                           placeholder="예) 아메리카노 / 케이크"
                         />
@@ -588,46 +630,35 @@ export default function RoomAddExpensePage() {
                         </Button>
                       </div>
 
-                      {it.mode === ITEM_MODE.PER_PERSON ? (
-                        <div className="grid gap-2">
-                          <Label>1인당 가격</Label>
-                          <Input
-                            value={it.unitPrice}
-                            onChange={(e) =>
-                              updateItem(it.id, { unitPrice: e.target.value })
-                            }
-                            inputMode="numeric"
-                          />
-                        </div>
-                      ) : (
-                        <div className="grid gap-2">
-                          <Label>총액(참여자 n빵)</Label>
-                          <Input
-                            value={it.totalPrice}
-                            onChange={(e) =>
-                              updateItem(it.id, { totalPrice: e.target.value })
-                            }
-                            inputMode="numeric"
-                          />
-                        </div>
-                      )}
+                      <div className="grid gap-2">
+                        <Label>
+                          {it.mode === ITEM_MODE.PER_PERSON ? "1인당 가격" : "총액(참여자 n빵)"}
+                        </Label>
+                        <Input
+                          value={it.price}
+                          onChange={(e) =>
+                            updateItem(it.id, { price: e.target.value })
+                          }
+                          inputMode="numeric"
+                        />
+                      </div>
 
                       <div className="grid gap-2">
                         <Label>참여자</Label>
                         <div className="grid gap-2 rounded-lg border p-3">
-                          {members.map((m) => (
+                          {members.map((userId) => (
                             <label
-                              key={m}
+                              key={userId}
                               className="flex items-center justify-between text-sm"
                             >
-                              <span>{m}</span>
+                              <span>사용자 {userId}</span>
                               <input
                                 type="checkbox"
                                 checked={
-                                  Array.isArray(it.users) &&
-                                  it.users.includes(m)
+                                  Array.isArray(it.itemParticipants) &&
+                                  it.itemParticipants.some((p) => p.userId === userId)
                                 }
-                                onChange={() => toggleItemUser(it.id, m)}
+                                onChange={() => toggleItemUser(it.id, userId)}
                               />
                             </label>
                           ))}
@@ -637,8 +668,8 @@ export default function RoomAddExpensePage() {
                       <div className="text-xs text-muted-foreground">
                         품목 합계: <b>{lineTotal.toLocaleString()}원</b>{" "}
                         {it.mode === ITEM_MODE.SHARED_SPLIT
-                          ? `(총액 ${total.toLocaleString()}원 ÷ ${cnt || 0}명)`
-                          : `(1인당 ${unit.toLocaleString()}원 × ${cnt}명)`}
+                          ? `(총액 ${price.toLocaleString()}원 ÷ ${cnt || 0}명)`
+                          : `(1인당 ${price.toLocaleString()}원 × ${cnt}명)`}
                       </div>
                     </CardContent>
                   </Card>
@@ -657,8 +688,12 @@ export default function RoomAddExpensePage() {
         <Button type="button" variant="outline" onClick={() => navigate(-1)}>
           취소
         </Button>
-        <Button type="button" onClick={handleSave} disabled={!canSave}>
-          저장
+        <Button
+          type="button"
+          onClick={handleSave}
+          disabled={!canSave || saving}
+        >
+          {saving ? "저장 중..." : "저장"}
         </Button>
       </div>
     </div>
