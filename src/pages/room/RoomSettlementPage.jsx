@@ -196,7 +196,7 @@ export default function RoomSettlementPage() {
   const transfers = useMemo(() => {
     return baseTransfers.map((t) => ({
       ...t,
-      status: statusMap[t.id] || SETTLEMENT_STATUS.READY,
+      status: statusMap[t.id] || SETTLEMENT_STATUS.UNSETTLED,
     }));
   }, [baseTransfers, statusMap]);
 
@@ -211,10 +211,10 @@ export default function RoomSettlementPage() {
   );
   const shown = showAll ? transfers : myTransfers;
 
-  // ✅ "요청 가능한 것" = 내가 받을 돈(to === currentUserId) 이고 READY인 것
+  // ✅ "요청 가능한 것" = 내가 받을 돈(to === currentUserId) 이고 UNSETTLED인 것
   const requestables = useMemo(() => {
     return transfers.filter(
-      (t) => t.to === currentUserId && t.status === SETTLEMENT_STATUS.READY,
+      (t) => t.to === currentUserId && t.status === SETTLEMENT_STATUS.UNSETTLED,
     );
   }, [transfers, currentUserId]);
 
@@ -240,7 +240,7 @@ export default function RoomSettlementPage() {
   };
 
   const markDone = (id) => {
-    const next = { ...statusMap, [id]: SETTLEMENT_STATUS.DONE };
+    const next = { ...statusMap, [id]: SETTLEMENT_STATUS.COMPLETED };
     persistStatusMap(next);
   };
 

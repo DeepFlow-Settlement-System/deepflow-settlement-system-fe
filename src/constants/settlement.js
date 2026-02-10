@@ -1,6 +1,6 @@
 // src/constants/settlement.js
 export const SETTLEMENT_STATUS = Object.freeze({
-  READY: "READY",
+  UNSETTLED: "UNSETTLED",
   REQUESTED: "REQUESTED",
-  DONE: "DONE",
+  COMPLETED: "COMPLETED",
 });
