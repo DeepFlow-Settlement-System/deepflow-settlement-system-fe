@@ -18,6 +18,7 @@ export async function getExpenses(groupId, options = {}) {
   const url = `/api/groups/${groupId}/expenses${queryString ? `?${queryString}` : ""}`;
 
   const res = await apiFetch(url);
+  console.log("getExpenses result:", res);
   return res || { groupId, expenses: [] };
 }
 

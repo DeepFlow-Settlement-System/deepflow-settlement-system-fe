@@ -61,11 +61,15 @@ function computeTransfers(expenses, userIdToNameMap) {
           : [];
         if (itemParticipants.length === 0) continue;
 
-        const itemTotal = Number(it.totalPrice || it.price || 0);
+        console.log("Item:", it);
+
+        const itemTotal = Number(it.totalPrice || it.lineAmount || 0);
         const share =
           itemParticipants.length > 0
             ? Math.round(itemTotal / itemParticipants.length)
             : 0;
+
+        console.log("share : ", share);
 
         for (const p of itemParticipants) {
           const participantUserId = p.userId || p;
@@ -77,7 +81,7 @@ function computeTransfers(expenses, userIdToNameMap) {
       }
     } else {
       // N빵 정산
-      const total = Number(e.totalAmount || e.amount || 0);
+      const total = Number(e.totalAmount || e.lineAmount || 0);
       const participants = Array.isArray(e.participants)
         ? e.participants
         : payerUserId
@@ -200,12 +204,20 @@ export default function RoomSettlementPage() {
     }));
   }, [baseTransfers, statusMap]);
 
+  console.log(
+    "MyTransfers : ",
+    transfers.filter(
+      (t) => Number(t.from) === currentUserId || Number(t.to) === currentUserId,
+    ),
+  );
+
   // 내가 관련된 것만 보기 / 전체 보기
   const [showAll, setShowAll] = useState(false);
   const myTransfers = useMemo(
     () =>
       transfers.filter(
-        (t) => t.from === currentUserId || t.to === currentUserId,
+        (t) =>
+          Number(t.from) === currentUserId || Number(t.to) === currentUserId,
       ),
     [transfers, currentUserId],
   );
@@ -234,8 +246,9 @@ export default function RoomSettlementPage() {
     let send = 0;
     let recv = 0;
     for (const t of myTransfers) {
-      if (t.from === currentUserId) send += t.amount;
-      if (t.to === currentUserId) recv += t.amount;
+      console.log("T : ", t);
+      if (Number(t.from) === currentUserId) send += t.amount;
+      if (Number(t.to) === currentUserId) recv += t.amount;
     }
     return { send, recv };
   }, [myTransfers, currentUserId]);
