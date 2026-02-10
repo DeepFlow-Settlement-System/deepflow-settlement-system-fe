@@ -3,12 +3,12 @@ import { apiFetch } from "./client";
 
 /**
  * 영수증 업로드 및 OCR 실행
- * @param {File} file - 이미지 파일
+ * @param {File} image - 이미지 파일
  * @returns {Promise<Object>} {receiptId}
  */
-export async function uploadReceipt(file) {
+export async function uploadReceipt(image) {
   const formData = new FormData();
-  formData.append("image", file);
+  formData.append("image", image);
 
   return await apiFetch("/api/receipts", {
     method: "POST",
