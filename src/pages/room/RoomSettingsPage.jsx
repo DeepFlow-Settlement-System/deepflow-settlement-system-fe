@@ -341,7 +341,7 @@ export default function RoomSettingsPage() {
                 </div>
                 <Label>이름</Label>
                 <div className="text-sm font-medium">
-                  {currentUser.name || currentUser.username || "이름 없음"}
+                  {currentUser.nickname || currentUser.username || "이름 없음"}
                 </div>
                 {currentUser.email && (
                   <>
@@ -373,23 +373,34 @@ export default function RoomSettingsPage() {
                     멤버가 없습니다.
                   </div>
                 ) : (
-                  members.map((m) => (
-                    <div
-                      key={m.userId || m.id || m}
-                      className="flex items-center justify-between rounded-lg border px-3 py-2"
-                    >
-                      <span className="text-sm font-medium">
-                        {m.name ||
-                          m.username ||
-                          `사용자 ${m.userId || m.id || m}`}
-                        {currentUser &&
-                        (m.userId || m.id) ===
-                          (currentUser.id || currentUser.userId)
-                          ? " (나)"
-                          : ""}
-                      </span>
-                    </div>
-                  ))
+                  members.map((m) => {
+                    const userId = m.userId || m.id || m;
+                    // nickname 우선 사용, 없으면 name, username 순으로 fallback
+                    // 멤버 객체가 중첩 구조일 수도 있으므로 m.user?.nickname도 확인
+                    console.log('Member object:', m);
+                    const nickname =
+                      m.nickname ||
+                      m.user?.nickname ||
+                      m.name ||
+                      m.user?.name ||
+                      m.username ||
+                      m.user?.username ||
+                      `사용자 ${userId}`;
+                    return (
+                      <div
+                        key={userId}
+                        className="flex items-center justify-between rounded-lg border px-3 py-2"
+                      >
+                        <span className="text-sm font-medium">
+                          {nickname}
+                          {currentUser &&
+                          userId === (currentUser.id || currentUser.userId)
+                            ? " (나)"
+                            : ""}
+                        </span>
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
