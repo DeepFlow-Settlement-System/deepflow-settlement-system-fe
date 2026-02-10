@@ -71,9 +71,12 @@ export default function RoomAddExpensePage() {
         setCurrentUserId(userId);
 
         setGroup(groupData);
-        // 멤버는 userId 배열로 변환
-        const memberUserIds = (groupData.members || []).map((m) => m.userId);
-        setMembers(memberUserIds);
+        // 멤버는 전체 객체 배열로 저장 (nickname 정보 포함)
+        const memberObjects = groupData.members || [];
+        setMembers(memberObjects);
+
+        // memberUserIds는 별도로 추출 (기존 로직 호환성)
+        const memberUserIds = memberObjects.map((m) => m.userId || m.id);
 
         // payerUserId 설정: 현재 사용자 ID가 멤버에 있으면 그것을, 없으면 첫 번째 멤버
         if (userId && memberUserIds.includes(userId)) {
@@ -117,11 +120,15 @@ export default function RoomAddExpensePage() {
       !items[0].itemName &&
       !items[0].price
     ) {
-      setItems([newItem(members)]);
+      const memberUserIds = members.map((m) => m.userId || m.id);
+      setItems([newItem(memberUserIds)]);
     }
   }, [members]);
 
-  const addItem = () => setItems((prev) => [...prev, newItem(members)]);
+  const addItem = () => {
+    const memberUserIds = members.map((m) => m.userId || m.id);
+    setItems((prev) => [...prev, newItem(memberUserIds)]);
+  };
   const removeItem = (id) =>
     setItems((prev) => prev.filter((it) => it.id !== id));
 
@@ -315,15 +322,16 @@ export default function RoomAddExpensePage() {
       if (items.length > 0) {
         setSplitType(SPLIT.ITEM);
         setItems((prev) => {
+          const memberUserIds = members.map((m) => m.userId || m.id);
           const mapped = items.slice(0, 15).map((it) =>
-            newItem(members, {
+            newItem(memberUserIds, {
               itemName:
                 String(it.name?.formatted?.value || "").trim() || "품목",
               mode: ITEM_MODE.PER_PERSON,
               price: String(
                 Number(it.price?.price?.formatted?.replace(/,/g, "") || 0),
               ),
-              itemParticipants: members.map((userId) => ({ userId })),
+              itemParticipants: memberUserIds.map((userId) => ({ userId })),
             }),
           );
 
@@ -339,6 +347,32 @@ export default function RoomAddExpensePage() {
     } catch (e) {
       console.error("OCR 결과 파싱 실패:", e);
     }
+  };
+
+  // nickname을 가져오는 헬퍼 함수
+  const getMemberNickname = (member) => {
+    if (typeof member === 'number' || typeof member === 'string') {
+      // member가 userId인 경우 (fallback)
+      return `사용자 ${member}`;
+    }
+    const userId = member.userId || member.id || member;
+    return (
+      member.nickname ||
+      member.user?.nickname ||
+      member.name ||
+      member.user?.name ||
+      member.username ||
+      member.user?.username ||
+      `사용자 ${userId}`
+    );
+  };
+
+  // member 객체에서 userId를 가져오는 헬퍼 함수
+  const getMemberUserId = (member) => {
+    if (typeof member === 'number' || typeof member === 'string') {
+      return member;
+    }
+    return member.userId || member.id || member;
   };
 
   if (loading) {
@@ -505,11 +539,14 @@ export default function RoomAddExpensePage() {
                 onChange={(e) => setPayerUserId(Number(e.target.value))}
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm"
               >
-                {members.map((userId) => (
-                  <option key={userId} value={userId}>
-                    사용자 {userId}
-                  </option>
-                ))}
+                {members.map((m) => {
+                  const userId = getMemberUserId(m);
+                  return (
+                    <option key={userId} value={userId}>
+                      {getMemberNickname(m)}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>
@@ -552,19 +589,22 @@ export default function RoomAddExpensePage() {
             <div className="grid gap-2">
               <Label>참여자</Label>
               <div className="grid gap-2 rounded-lg border p-3">
-                {members.map((userId) => (
-                  <label
-                    key={userId}
-                    className="flex items-center justify-between text-sm"
-                  >
-                    <span>사용자 {userId}</span>
-                    <input
-                      type="checkbox"
-                      checked={participants.includes(userId)}
-                      onChange={() => toggleParticipant(userId)}
-                    />
-                  </label>
-                ))}
+                {members.map((m) => {
+                  const userId = getMemberUserId(m);
+                  return (
+                    <label
+                      key={userId}
+                      className="flex items-center justify-between text-sm"
+                    >
+                      <span>{getMemberNickname(m)}</span>
+                      <input
+                        type="checkbox"
+                        checked={participants.includes(userId)}
+                        onChange={() => toggleParticipant(userId)}
+                      />
+                    </label>
+                  );
+                })}
               </div>
             </div>
           </CardContent>
@@ -672,24 +712,27 @@ export default function RoomAddExpensePage() {
                       <div className="grid gap-2">
                         <Label>참여자</Label>
                         <div className="grid gap-2 rounded-lg border p-3">
-                          {members.map((userId) => (
-                            <label
-                              key={userId}
-                              className="flex items-center justify-between text-sm"
-                            >
-                              <span>사용자 {userId}</span>
-                              <input
-                                type="checkbox"
-                                checked={
-                                  Array.isArray(it.itemParticipants) &&
-                                  it.itemParticipants.some(
-                                    (p) => p.userId === userId,
-                                  )
-                                }
-                                onChange={() => toggleItemUser(it.id, userId)}
-                              />
-                            </label>
-                          ))}
+                          {members.map((m) => {
+                            const userId = getMemberUserId(m);
+                            return (
+                              <label
+                                key={userId}
+                                className="flex items-center justify-between text-sm"
+                              >
+                                <span>{getMemberNickname(m)}</span>
+                                <input
+                                  type="checkbox"
+                                  checked={
+                                    Array.isArray(it.itemParticipants) &&
+                                    it.itemParticipants.some(
+                                      (p) => p.userId === userId,
+                                    )
+                                  }
+                                  onChange={() => toggleItemUser(it.id, userId)}
+                                />
+                              </label>
+                            );
+                          })}
                         </div>
                       </div>
 

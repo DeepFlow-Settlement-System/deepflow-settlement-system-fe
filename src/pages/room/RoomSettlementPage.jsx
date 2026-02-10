@@ -155,14 +155,24 @@ export default function RoomSettlementPage() {
     if (group?.members) {
       for (const member of group.members) {
         const userId = member.userId || member.id;
-        const name = member.name || member.username || `사용자 ${userId}`;
+        const name =
+          member.nickname ||
+          member.user?.nickname ||
+          member.name ||
+          member.user?.name ||
+          member.username ||
+          member.user?.username ||
+          `사용자 ${userId}`;
         map[userId] = name;
       }
     }
     if (currentUser) {
       const userId = currentUser.id || currentUser.userId;
       const name =
-        currentUser.name || currentUser.username || `사용자 ${userId}`;
+        currentUser.nickname ||
+        currentUser.name ||
+        currentUser.username ||
+        `사용자 ${userId}`;
       map[userId] = name;
     }
     return map;
@@ -274,6 +284,7 @@ export default function RoomSettlementPage() {
   }
 
   const currentUserName =
+    currentUser?.nickname ||
     currentUser?.name ||
     currentUser?.username ||
     userIdToNameMap[currentUserId] ||
