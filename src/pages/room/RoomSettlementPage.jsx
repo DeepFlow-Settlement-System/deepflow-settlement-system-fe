@@ -213,8 +213,19 @@ export default function RoomSettlementPage() {
 
   // ✅ "요청 가능한 것" = 내가 받을 돈(to === currentUserId) 이고 UNSETTLED인 것
   const requestables = useMemo(() => {
+    console.log("transfers : ", transfers);
+    console.log(
+      "transfers filtered : ",
+      transfers.filter(
+        (t) =>
+          Number(t.to) === currentUserId &&
+          t.status === SETTLEMENT_STATUS.UNSETTLED,
+      ),
+    );
     return transfers.filter(
-      (t) => t.to === currentUserId && t.status === SETTLEMENT_STATUS.UNSETTLED,
+      (t) =>
+        Number(t.to) === currentUserId &&
+        t.status === SETTLEMENT_STATUS.UNSETTLED,
     );
   }, [transfers, currentUserId]);
 

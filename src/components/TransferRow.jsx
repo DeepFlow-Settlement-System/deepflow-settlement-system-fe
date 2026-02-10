@@ -11,9 +11,9 @@ export default function TransferRow({
   onResend,
   onDone,
 }) {
-  const isReady = item.status === SETTLEMENT_STATUS.READY;
+  const isReady = item.status === SETTLEMENT_STATUS.UNSETTLED;
   const isRequested = item.status === SETTLEMENT_STATUS.REQUESTED;
-  const isDone = item.status === SETTLEMENT_STATUS.DONE;
+  const isDone = item.status === SETTLEMENT_STATUS.COMPLETED;
 
   return (
     <Card className="p-4 flex items-center justify-between gap-3">
